@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tblkit"
+version = "0.1.0"
+description = "CLI utilities for robust tabular data workflows."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Nizar Batada"}]
+dependencies = ["pandas>=2.0", "numpy>=1.24"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://example.com"
+Repository = "https://example.com/repo"
+Issues = "https://example.com/repo/issues"
+
+[project.scripts]
+tblkit = "tblkit.core:main"
+
+[tool.setuptools]
+packages = ["tblkit", "tblkit.utils"]
