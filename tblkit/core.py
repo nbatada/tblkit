@@ -374,15 +374,94 @@ def _handle_tbl_pivot(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
     pivoted.columns.name = None
     return pivoted
 
-def _handle_tbl_concat(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    all_dfs = []
+def _handle_tbl_concat(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """
+    Concatenate piped data and/or many files, with optional path-derived metadata columns.
+
+    Supports:
+      - positional FILES
+      - --filelist FILE   (list of files, one per line; ignores blank lines and lines starting with '#')
+      - --extract-from-path REGEX with named capture groups (?P<name>...)
+      - --ancestor-cols-to-include COL1,COL2,... (rightmost name = immediate parent dir)
+    """
+    from pathlib import Path
+    import os
+
+    # Gather candidate files
+    files: list[str] = []
+    if getattr(args, "files", None):
+        files.extend([f for f in args.files if f is not None])
+
+    filelist = getattr(args, "filelist", None)
+    if filelist:
+        with open(filelist, "r", encoding=getattr(args, "encoding", "utf-8")) as fh:
+            for line in fh:
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                files.append(s)
+
+    # Read each table
+    sep = getattr(args, "sep", "\t")
+    enc = getattr(args, "encoding", "utf-8")
+    header = 0 if is_header_present else None
+
+    all_dfs: list[pd.DataFrame] = []
     if df is not None:
         all_dfs.append(df)
-    for f in args.files:
-        all_dfs.append(UIO.read_table(f, sep=args.sep, header=0 if is_header_present else None, encoding=args.encoding))
+
+    # Pre-parse path options
+    path_regex = None
+    if getattr(args, "extract_from_path", None):
+        try:
+            path_regex = re.compile(args.extract_from_path)
+            if not path_regex.groupindex:
+                raise ValueError("--extract-from-path regex must contain at least one named group, e.g., (?P<name>...).")
+        except re.error as e:
+            raise ValueError(f"Invalid regex for --extract-from-path: {e}")
+
+    ancestor_cols: list[str] | None = None
+    if getattr(args, "ancestor_cols_to_include", None):
+        ancestor_cols = [c.strip() for c in args.ancestor_cols_to_include.split(",") if c.strip()]
+        if not ancestor_cols:
+            ancestor_cols = None
+
+    for file_path in files:
+        d = UIO.read_table(file_path, sep=sep, header=header, encoding=enc)
+        # Optionally derive columns from the path
+        extras: dict[str, object] = {}
+        if path_regex is not None:
+            m = path_regex.search(str(file_path))
+            if m:
+                extras.update({k: v for k, v in m.groupdict().items()})
+            else:
+                # If no match, still add named columns with NA to keep schema stable
+                for k in path_regex.groupindex.keys():
+                    extras.setdefault(k, pd.NA)
+        elif ancestor_cols:
+            p = Path(file_path).parent
+            parts = list(p.parts)
+            need = len(ancestor_cols)
+            # take last N parts for the provided column names
+            take = parts[-need:] if need <= len(parts) else [None] * (need - len(parts)) + parts
+            # Map: rightmost provided name -> immediate parent
+            for col_name, part in zip(ancestor_cols, take, strict=False):
+                extras[col_name] = None if part is None else os.path.basename(part)
+
+        if extras:
+            for k, v in extras.items():
+                # Ensure new columns filled with the same value for all rows in this file
+                d[k] = v
+
+        # Skip fully empty or all-NA frames
+        if not d.empty and not d.isna().all().all():
+            all_dfs.append(d)
+
     if not all_dfs:
         return pd.DataFrame()
-    return pd.concat(all_dfs, ignore_index=True)
+
+    return pd.concat(all_dfs, ignore_index=True, sort=False)
+
 
 def _handle_tbl_aggregate(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("tbl aggregate expects piped data")
@@ -776,7 +855,20 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     
     t_concat = tsub.add_parser("concat", help="Concatenate piped table with other files")
     t_concat.add_argument("files", nargs='*', help="Files to concatenate (if not piped).")
+    t_concat.add_argument("--filelist", metavar="FILE", help="File containing a list of input files (one per line).")
+    concat_path = t_concat.add_mutually_exclusive_group()
+    concat_path.add_argument(
+        "--ancestor-cols-to-include",
+        dest="ancestor_cols_to_include",
+        help="Comma-separated names for columns to create from parent directories (rightmost = immediate parent).",
+    )
+    concat_path.add_argument(
+        "--extract-from-path",
+        dest="extract_from_path",
+        help="Regex with NAMED capture groups applied to each file path, e.g. '(?P<proj>[^/]+)/(?P<sample>[^/]+)/[^/]+$'.",
+    )
     t_concat.set_defaults(handler=_handle_tbl_concat)
+
     
     t_agg = tsub.add_parser("aggregate", help="Group and aggregate data")
     t_agg.add_argument("-g", "--group", required=True, help="Grouping column(s).")
