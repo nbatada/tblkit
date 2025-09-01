@@ -5,12 +5,15 @@ import pandas as pd
 from typing import Optional
 
 def _normalize_sep(sep: Optional[str]) -> str:
-    """Map common tokens to actual separators; pass through others."""
+    """
+    Map common tokens to actual separators; pass through others verbatim.
+    Accepts: csv, tsv, tab, pipe, bar, space/spaces, '\t', ',', '|', regex.
+    """
     if sep is None:
         return "\t"
     s = str(sep).strip()
     low = s.lower()
-    if low in {"csv"}:
+    if low in {"csv", "comma"}:
         return ","
     if low in {"tsv", "tab"}:
         return "\t"
@@ -18,8 +21,8 @@ def _normalize_sep(sep: Optional[str]) -> str:
         return "\t"
     if low in {"pipe", "bar"}:
         return "|"
-    if low in {"space", "spaces"}:
-        # make 'space' robust to runs of whitespace
+    if low in {"space", "spaces", "whitespace"}:
+        # robust to runs of spaces/tabs
         return r"\s+"
     return s  # literal or regex (multi-char ok)
 
@@ -41,6 +44,12 @@ def read_table(path: Optional[str],
     from pandas.errors import EmptyDataError, ParserError
 
     use_sep = _normalize_sep(sep)
+    if not use_sep:
+        use_sep = ","
+    # If multi-char and not obviously a regex, coerce to comma to avoid csv-engine errors.
+    if len(use_sep) > 1 and not re.search(r"[\\\[\]\+\*\?\|\(\)]", use_sep):
+        use_sep = ","
+        
     need_python = (len(use_sep) > 1) or (use_sep.startswith("\\")
                     or bool(re.search(r"\\|[\[\]\+\*\?\|\(\)]", use_sep)))
 

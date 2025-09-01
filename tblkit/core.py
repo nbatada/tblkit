@@ -1203,110 +1203,100 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     p_tbl = subparsers.add_parser("tbl", help="Whole-table operations",
                                   formatter_class=UFMT.CommandGroupHelpFormatter,
                                   parents=parents)
-    tsub = p_tbl.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
-    
+    tsub = p_tbl.add_subparsers(dest="action", title="Action", metavar="Action",
+                                required=True, parser_class=UFMT.ActionParser)
+
     # clean
-    t_clean = tsub.add_parser("clean", help="Clean headers and string values throughout the table.")
+    t_clean = tsub.add_parser("clean", help="Clean headers and string values throughout the table.", parents=parents)
     t_clean.add_argument("--case", choices=["lower", "upper"], help="Convert case.")
     t_clean.add_argument("--spaces", help="Character to replace whitespace with.")
     t_clean.add_argument("--ascii", action="store_true", help="Remove non-ASCII characters.")
     t_clean.add_argument("--dedupe", help="Character for de-duplicating header names.")
     t_clean.add_argument("--header-only", action="store_true", help="Only clean the header, not cell values.")
     t_clean.add_argument("--exclude", help="Comma-separated columns to exclude from value cleaning.")
-    # Inverse knobs for the sensible defaults (applied in handler)
     t_clean.add_argument("--keep-spaces", action="store_true", help="Keep spaces as-is (no squeeze/underscore).")
     t_clean.add_argument("--keep-punct", action="store_true", help="Keep punctuation.")
     t_clean.add_argument("--keep-case", action="store_true", help="Do not lowercase.")
     t_clean.add_argument("--keep-ascii", action="store_true", help="Do not strip non-ASCII.")
     t_clean.add_argument("--strip-punct-values", action="store_true",
-                         help="Also strip punctuation from string values (default: keep).")    
+                         help="Also strip punctuation from string values (default: keep).")
     t_clean.set_defaults(handler=_handle_tbl_clean)
 
-
-    t_freq = tsub.add_parser("frequency", help="Show top N values per column.")
+    # frequency
+    t_freq = tsub.add_parser("frequency", help="Show top N values per column.", parents=parents)
     t_freq.add_argument("-c", "--columns", help="Columns to analyze (default: all string columns).")
     t_freq.add_argument("-n", type=int, default=5, help="Number of top values to show.")
     t_freq.add_argument("--all-columns", action="store_true", help="Analyze all columns, not just string ones.")
     t_freq.set_defaults(handler=_handle_view_frequency)
 
-
-    t_join = tsub.add_parser("join", help="Relational join between two tables.")
+    # join
+    t_join = tsub.add_parser("join", help="Relational join between two tables.", parents=parents)
     t_join.add_argument("--left", required=True, help="Path to the left table.")
     t_join.add_argument("--right", required=True, help="Path to the right table.")
-    t_join.add_argument("--keys", required=True, help="Comma-separated key column(s).")
-    t_join.add_argument("--how", default="inner", choices=["left", "right", "outer", "inner"])
-    t_join.add_argument("--lsuffix", default="_x", help="Suffix for overlapping columns from left table.")
-    t_join.add_argument("--rsuffix", default="_y", help="Suffix for overlapping columns from right table.")
-    # Fuzzy join options (single-key, left-join only for now)
-    t_join.add_argument("--fuzzy", action="store_true",
-                        help="Enable fuzzy matching for keys (supports single key + --how left).")
-    t_join.add_argument("--key-norm", action="append",
-                        help="Repeatable normalization steps, e.g. 'strip_suffix:-\\d+$', 'rm_leading_zeros', 'upper', 'lower', 'trim', 'strip:_'.")
-    t_join.add_argument("--threshold", type=float, default=0.9,
+    t_join.add_argument("--keys", required=True, help="Comma-separated join key(s).")
+    t_join.add_argument("--how", choices=["left","right","inner","outer"], default="left")
+    t_join.add_argument("--keep-left", help="Comma-separated columns to keep from left (default: all).")
+    t_join.add_argument("--keep-right", help="Comma-separated columns to keep from right (default: all).")
+    t_join.add_argument("--suffixes", default="_x,_y", help="Suffixes for overlapping right/left columns.")
+    t_join.add_argument("--fuzzy", action="store_true", help="Enable fuzzy matching fallback.")
+    t_join.add_argument("--left-key-norm", dest="key_norm", action="append",
+                        help="Normalization(s) to apply to left key before fuzzy matching.")
+    t_join.add_argument("--right-key-norm", dest="right_key_norm", action="append",
+                        help="Normalization(s) to apply to right key before fuzzy matching.")
+    t_join.add_argument("--fuzzy-threshold", type=float, default=0.9,
                         help="Fuzzy match similarity threshold in [0,1] (default: 0.9).")
     t_join.add_argument("--require-coverage", action="store_true",
                         help="Error if any left key remains unmatched after exact+fuzzy.")
-    t_join.add_argument("--report",
-                        help="Write CSV report of matches (left_key,right_key,score,method).")
+    t_join.add_argument("--report", help="Write CSV report of matches (left_key,right_key,score,method).")
     t_join.set_defaults(handler=_handle_tbl_join, standalone=True)
 
-    
-    t_sort = tsub.add_parser("sort", help="Sort rows by column values (alias for 'sort rows').",
-                             parents=parents)
+    # sort (already inherited)
+    t_sort = tsub.add_parser("sort", help="Sort rows by column values (alias for 'sort rows').", parents=parents)
     t_sort.add_argument("--by", required=True, help="Comma-separated columns to sort by.")
     t_sort.add_argument("--descending", action="store_true")
     t_sort.add_argument("--natural", action="store_true", help="Use natural sort order.")
     t_sort.add_argument("--date", action="store_true", help="Parse the sort keys as dates.")
     t_sort.add_argument("--date-format", help="Optional strptime format for dates.")
-    t_sort.add_argument("--numeric", action="store_true",
-                    help="Coerce sort keys to numeric for ordering (data unchanged).")
-
     t_sort.set_defaults(handler=_handle_sort_row)
-    
-    t_pivot = tsub.add_parser("pivot", help="Pivot a table from long to wide format")
-    t_pivot.add_argument("--index", required=True, help="Columns to use as new index.")
-    t_pivot.add_argument("--columns", required=True, help="Column to pivot into new columns.")
-    t_pivot.add_argument("--values", required=True, help="Column to use for new values.")
-    t_pivot.add_argument("--agg", default="first", help="Aggregation function for duplicates.")
+
+    # pivot
+    t_pivot = tsub.add_parser("pivot", help="Pivot wider.", parents=parents)
+    t_pivot.add_argument("--index", required=True)
+    t_pivot.add_argument("--columns", required=True)
+    t_pivot.add_argument("--values", required=True)
     t_pivot.set_defaults(handler=_handle_tbl_pivot)
-    
-    t_concat = tsub.add_parser("concat", help="Concatenate piped table with other files")
-    t_concat.add_argument("files", nargs='*', help="Files to concatenate (if not piped).")
-    t_concat.add_argument("--filelist", metavar="FILE", help="File containing a list of input files (one per line).")
-    concat_path = t_concat.add_mutually_exclusive_group()
-    concat_path.add_argument(
-        "--ancestor-cols-to-include",
-        dest="ancestor_cols_to_include",
-        help="Comma-separated names for columns to create from parent directories (rightmost = immediate parent).",
-    )
-    concat_path.add_argument(
-        "--extract-from-path",
-        dest="extract_from_path",
-        help="Regex with NAMED capture groups applied to each file path, e.g. '(?P<proj>[^/]+)/(?P<sample>[^/]+)/[^/]+$'.",
-    )
+
+    # concat
+    t_concat = tsub.add_parser("concat", help="Concatenate tables vertically.", parents=parents)
+    t_concat.add_argument("--files", required=False, help="Comma-separated paths, or use --filelist.")
+    t_concat.add_argument("--filelist", help="Path to a file listing table paths.")
+    t_concat.add_argument("--fill-missing", action="store_true", help="Union columns, filling missing with NA.")
     t_concat.set_defaults(handler=_handle_tbl_concat)
 
-    
-    t_agg = tsub.add_parser("aggregate", help="Group and aggregate data")
-    t_agg.add_argument("-g", "--group", required=True, help="Grouping column(s).")
-    t_agg.add_argument("-c", "--columns", help="Columns to aggregate (default: all numeric).")
+    # aggregate
+    t_agg = tsub.add_parser("aggregate", help="Group and aggregate numeric columns.", parents=parents)
+    t_agg.add_argument("--group-by", required=True, help="Comma-separated group columns.")
+    t_agg.add_argument("--columns", help="Columns to aggregate (default: all numeric).")
     t_agg.add_argument("--funcs", required=True, help="Comma-separated aggregation functions.")
     t_agg.set_defaults(handler=_handle_tbl_aggregate)
-    
-    t_squash = tsub.add_parser("squash", help="Group rows and squash column values into delimited strings.")
+
+    # squash
+    t_squash = tsub.add_parser("squash", help="Group rows and squash column values into delimited strings.", parents=parents)
     t_squash.add_argument("-g", "--group-by", required=True, help="Column(s) to group by.")
     t_squash.add_argument("-d", "--delimiter", default=",", help="Delimiter for joining values.")
     t_squash.add_argument("--keep-all", action="store_true", help="Join all values, not just unique ones.")
     t_squash.set_defaults(handler=_handle_tbl_squash)
-    
-    t_melt = tsub.add_parser("melt", help="Melt table to long format.")
+
+    # melt
+    t_melt = tsub.add_parser("melt", help="Melt table to long format.", parents=parents)
     t_melt.add_argument("--id-vars", required=True)
     t_melt.add_argument("--value-vars")
     t_melt.add_argument("--var-name", default="variable")
     t_melt.add_argument("--value-name", default="value")
     t_melt.set_defaults(handler=_handle_tbl_melt)
-    
-    t_transpose = tsub.add_parser("transpose", help="Transpose the table.")
+
+    # transpose
+    t_transpose = tsub.add_parser("transpose", help="Transpose the table.", parents=parents)
     t_transpose.set_defaults(handler=_handle_tbl_transpose)
     
 def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
@@ -1491,15 +1481,17 @@ def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None
     h_add.add_argument("--force", action="store_true", help="Add header even if one appears to exist.")
     h_add.set_defaults(handler=_handle_header_add)
 
-    h_clean = hsub.add_parser("clean", help="Normalize all column names (deprecated; use: tbl clean)")
+    h_clean = hsub.add_parser(
+        "clean",
+        help="Normalize all column names (deprecated; use: tbl clean)",
+        parents=parents
+    )    
     h_clean.add_argument("--case", choices=["lower", "upper"], help="Convert case.")
     h_clean.add_argument("--spaces", help="Character to replace whitespace with.")
     h_clean.add_argument("--ascii", action="store_true", help="Remove non-ASCII characters.")
     h_clean.add_argument("--dedupe", help="Character to use as a separator for de-duplicating names.")
     h_clean.set_defaults(handler=_handle_tbl_clean)
     
-    # In _attach_header_group(...) — add these three subparsers near the end:
-
     h_prefix_num = hsub.add_parser("prefix-num", help="Prefix headers with 1_, 2_, ... (or custom fmt).")
     h_prefix_num.add_argument("--fmt", default="{i}_", help="Format string with {i} (default: '{i}_').")
     h_prefix_num.add_argument("--start", type=int, default=1, help="Starting integer (default: 1).")
