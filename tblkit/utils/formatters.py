@@ -167,10 +167,19 @@ class CustomArgumentParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
 
     def error(self, message: str) -> None:
-        # Print help to stderr, then exit with code 2 and the error message.
-        self.print_help(sys.stderr)
-        self.exit(2, f"Error: {message}\n")
-
+        # Friendly error header/footer; color if TTY and NO_COLOR not set.
+        use_color = sys.stderr.isatty() and (os.getenv("NO_COLOR") is None)
+        red = "\033[31m" if use_color else ""
+        reset = "\033[0m" if use_color else ""
+        
+        sys.stderr.write("-------------------------------\n")
+        sys.stderr.write(f"{red}Error: {message} (--help for details) {reset}\n")
+        sys.stderr.write("-------------------------------\n\n")
+        
+        # Print help AFTER the error (not before), then exit with code 2.
+        #self.print_help(sys.stderr)
+        self.exit(2)
+    
 class ActionParser(argparse.ArgumentParser):
     """
     Subparser class for individual actions that ensures consistent formatting:

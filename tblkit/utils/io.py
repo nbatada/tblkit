@@ -1,36 +1,77 @@
-# io.py — REPLACE THE WHOLE FILE WITH THIS
 from __future__ import annotations
 import sys
+import re
 import pandas as pd
 from typing import Optional
+
+def _normalize_sep(sep: Optional[str]) -> str:
+    """Map common tokens to actual separators; pass through others."""
+    if sep is None:
+        return "\t"
+    s = str(sep).strip()
+    low = s.lower()
+    if low in {"csv"}:
+        return ","
+    if low in {"tsv", "tab"}:
+        return "\t"
+    if s == r"\t":
+        return "\t"
+    if low in {"pipe", "bar"}:
+        return "|"
+    if low in {"space", "spaces"}:
+        # make 'space' robust to runs of whitespace
+        return r"\s+"
+    return s  # literal or regex (multi-char ok)
 
 def read_table(path: Optional[str],
                *,
                sep: str = "\t",
                header: Optional[int] = 0,
                encoding: str = "utf-8",
-               na_values=None) -> pd.DataFrame:
+               na_values=None,
+               on_bad_lines: str | None = "error") -> pd.DataFrame:
     """
     Read a delimited table from a path or stdin.
       - path None or "-" → read from stdin
-      - sep defaults to tab; header=0 includes header, header=None for headerless
-      - compression inferred by pandas
+      - sep: token or literal or regex (csv, tsv, tab, pipe, space, '\\t', ',', etc.)
+      - header=0 includes header; header=None for headerless
+      - on_bad_lines: 'error' | 'warn' | 'skip' (pandas >=1.3)
     """
     source = sys.stdin if path in (None, "-") else path
+    use_sep = _normalize_sep(sep)
+
+    # Use python engine only when necessary (regex or multi-char separators)
+    need_python = (len(use_sep) > 1) or (use_sep.startswith("\\") or bool(re.search(r"\\|[\[\]\+\*\?\|\(\)]", use_sep)))
+
     try:
-        # Use python engine for multi-char or regex-ish seps; pandas will pick fast path otherwise
         df = pd.read_csv(
             source,
-            sep=sep,
+            sep=use_sep,
             header=header,
             encoding=encoding,
             na_values=na_values,
-            engine="python",
+            on_bad_lines=on_bad_lines,  # pandas >= 1.3
+            engine="python" if need_python else None,
             compression="infer",
         )
         return df
+    except TypeError as te:
+        # Fallback for very old pandas without on_bad_lines
+        if "on_bad_lines" in str(te):
+            df = pd.read_csv(
+                source,
+                sep=use_sep,
+                header=header,
+                encoding=encoding,
+                na_values=na_values,
+                engine="python" if need_python else None,
+                compression="infer",
+            )
+            return df
+        raise
     except Exception as e:
-        raise ValueError(f"Failed to read table from {'stdin' if source is sys.stdin else str(source)}: {e}") from e
+        where = "stdin" if source is sys.stdin else str(source)
+        raise ValueError(f"Failed to read table from {where}: {e}") from e
 
 def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None:
     """
@@ -43,14 +84,11 @@ def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None
     """
     import math
 
-    # Column clipping
     max_cols = int(getattr(args, "max_cols", 0) or 0)
     df2 = df.iloc[:, :max_cols] if max_cols > 0 else df
 
-    # Truncation policy
     max_col_width = None if getattr(args, "show_full", False) else int(getattr(args, "max_col_width", 40) or 40)
 
-    # Prepare data
     headers = [str(c) for c in df2.columns]
 
     def cell(s):
@@ -62,10 +100,8 @@ def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None
             return txt[: max(1, max_col_width - 1)] + "…"
         return txt
 
-    # Print all rows (no head()); user controls via pipe
     rows = [[cell(v) for v in row] for row in df2.itertuples(index=False, name=None)]
 
-    # Column widths (header-aware)
     widths = [len(h) for h in headers]
     for r in rows:
         for i, v in enumerate(r):
@@ -86,7 +122,6 @@ def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None
             out.write(render_row(r) + "\n")
         out.write(hline() + "\n")
     except BrokenPipeError:
-        # Quiet when consumer (head/less) closes the pipe early
         return
 
 def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
@@ -99,7 +134,7 @@ def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
     out = sys.stdout if path in (None, "-") else open(path, "w", encoding=encoding)
     close = (out is not sys.stdout)
     try:
-        df.to_csv(out, sep=sep, index=index, header=header, na_rep=na_rep)
+        df.to_csv(out, sep=_normalize_sep(sep), index=index, header=header, na_rep=na_rep)
     except BrokenPipeError:
         return
     finally:
@@ -108,3 +143,4 @@ def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
                 out.close()
             except Exception:
                 pass
+            

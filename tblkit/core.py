@@ -387,6 +387,36 @@ def _handle_sort_row(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
     if df is None: raise ValueError("row sort expects piped data")
     sort_cols = UCOL.parse_multi_cols(args.by, df.columns)
     is_ascending = not args.descending
+
+    # Date-aware path (takes precedence)
+    if getattr(args, "date", False):
+        fmt = getattr(args, "date_format", None)
+        def key_dt(s: pd.Series):
+            if pd.api.types.is_datetime64_any_dtype(s):
+                return s
+            return pd.to_datetime(s, errors="coerce",
+                                  format=fmt if fmt else None,
+                                  infer_datetime_format=False if fmt else True)
+        return df.sort_values(by=sort_cols, ascending=is_ascending, key=key_dt)
+
+    # Numeric-aware path (coerce text to numbers for ordering only; data unchanged)
+    if getattr(args, "numeric", False):
+        def key_num(s: pd.Series):
+            if pd.api.types.is_numeric_dtype(s):
+                return s
+            ss = s.astype("string")
+            # parentheses negatives → -value
+            ss = ss.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
+            # drop leading currency symbols
+            ss = ss.str.replace(r"^[\$\€\£]\s*", "", regex=True)
+            # remove thousands separators (commas/underscores/spaces)
+            ss = ss.str.replace(r"[,_\s]", "", regex=True)
+            # strip trailing percent sign (treat -45.17% as -45.17 for ordering)
+            ss = ss.str.replace(r"%$", "", regex=True)
+            return pd.to_numeric(ss, errors="coerce")
+        return df.sort_values(by=sort_cols, ascending=is_ascending, key=key_num)
+
+    # Natural sort (strings) if requested
     try:
         from natsort import natsort_keygen
         key_func = natsort_keygen() if args.natural else None
@@ -395,6 +425,8 @@ def _handle_sort_row(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
         if args.natural:
             raise ImportError("Natural sort requires `natsort`. Please run `pip install natsort`.")
         return df.sort_values(by=sort_cols, ascending=is_ascending)
+    
+    
 
 def _handle_sort_header(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("header sort expects piped data")
@@ -488,12 +520,14 @@ def _handle_tbl_melt(df, args, column_names=None, **kwargs):
 
 def _handle_tbl_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """
-    Clean header and, by default, all string cells:
-      - spaces squeezed and replaced with '_' (unless --keep-spaces)
-      - lowercase (unless --keep-case)
-      - strip non-ASCII (unless --keep-ascii)
-      - remove punctuation (unless --keep-punct)
-      - dedupe header names with sep (default '_') if collisions occur
+    Clean header and, by default, only non-numeric, non-date string cells:
+      - Header: squeeze spaces→'_' (unless --keep-spaces), lowercase (unless --keep-case),
+        strip non-ASCII (unless --keep-ascii), strip punctuation (unless --keep-punct),
+        dedupe with sep (default '_').
+      - Values: operate ONLY on object/string cells that are NOT numeric-like and NOT date-like.
+        Numeric-like strings keep minus/decimals (and optional %); we normalize thousand separators
+        by removing commas/underscores/spaces in the integer part. Dates are left unchanged.
+        Punctuation in values is KEPT by default; use --strip-punct-values to remove.
     """
     if df is None:
         raise ValueError("tbl clean expects piped data.")
@@ -502,25 +536,58 @@ def _handle_tbl_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
     do_lower = not getattr(args, "keep_case", False)
     do_spaces = not getattr(args, "keep_spaces", False)
     do_ascii = not getattr(args, "keep_ascii", False)
-    do_punct = not getattr(args, "keep_punct", False)
+    do_punct_header = not getattr(args, "keep_punct", False)
+    do_punct_values = bool(getattr(args, "strip_punct_values", False))
 
-    def _cleanup_string(s: str) -> str:
+    import re
+
+    def _cleanup_header(s: str) -> str:
         new_s = str(s).strip()
         if do_lower:
             new_s = new_s.lower()
         if do_spaces:
-            # squeeze whitespace → single space, then replace with underscore
             new_s = re.sub(r"\s+", " ", new_s).strip().replace(" ", "_")
         if do_ascii:
             new_s = new_s.encode("ascii", "ignore").decode("ascii")
-        if do_punct:
+        if do_punct_header:
             new_s = re.sub(r"[^\w\s-]", "", new_s).strip()
         return new_s
 
+    # numeric-like: optional currency, sign, grouped thousands, optional decimals, optional %
+    NUM_RE = re.compile(r"""^\s*            # start
+                            [\$€£]?         # optional currency
+                            [-+]?           # sign
+                            (?:
+                                \d{1,3}(?:[,_\s]\d{3})+  # 1,234 or 1_234 or 1 234
+                                |\d+                      # or plain digits
+                            )
+                            (?:\.\d+)?      # optional decimals
+                            %?              # optional percent
+                            \s*$            # end
+                         """, re.VERBOSE)
+
+    DATE_RES = [
+        re.compile(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$"),
+        re.compile(r"^\d{2}/\d{2}/\d{4}$"),
+        re.compile(r"^\d{1,2}-[A-Za-z]{3}-\d{2,4}$"),
+        re.compile(r"^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}$"),
+    ]
+
+    def _is_date_like(x: str) -> bool:
+        s = str(x).strip()
+        if not s:
+            return False
+        return any(r.match(s) for r in DATE_RES)
+
+    def _normalize_numeric_like(s: str) -> str:
+        t = s.strip()
+        t = re.sub(r"^[\$€£]\s*", "", t)          # drop leading currency
+        t = t.replace(",", "").replace("_", "").replace(" ", "")  # drop grouping
+        return t  # keep '.' and '%'
+
     # 1) Header
     original = list(df.columns)
-    new_cols = [_cleanup_string(c) for c in original]
-    # dedupe
+    new_cols = [_cleanup_header(c) for c in original]
     seen = {}
     for i, c in enumerate(new_cols):
         if c not in seen:
@@ -533,14 +600,37 @@ def _handle_tbl_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
         seen[new_cols[i]] = 1
     df = df.rename(columns=dict(zip(original, new_cols)))
 
-    # 2) Values (unless header-only)
+    # 2) Values
     if not getattr(args, "header_only", False):
         exclude = set(UCOL.parse_multi_cols(getattr(args, "exclude", "") or "", df.columns))
         for col in df.columns:
             if col in exclude:
                 continue
+            # Skip numeric & datetimelike columns outright
+            if pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_datetime64_any_dtype(df[col]):
+                continue
+
             if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
-                df[col] = df[col].apply(lambda x: _cleanup_string(x) if pd.notna(x) else x)
+                def _cell(v):
+                    if pd.isna(v):
+                        return v
+                    s = str(v)
+                    if _is_date_like(s):
+                        return s
+                    if NUM_RE.match(s):
+                        return _normalize_numeric_like(s)
+                    # General text: lowercase/space/ascii like headers, but punctuation only if requested
+                    if do_lower:
+                        s = s.lower()
+                    if do_spaces:
+                        s = re.sub(r"\s+", " ", s).strip().replace(" ", "_")
+                    if do_ascii:
+                        s = s.encode("ascii", "ignore").decode("ascii")
+                    if do_punct_values:
+                        s = re.sub(r"[^\w\s-]", "", s).strip()
+                    return s
+
+                df[col] = df[col].apply(_cell)
     return df
 
 def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
@@ -738,44 +828,175 @@ def _handle_view_frequency(df: pd.DataFrame | None, args: argparse.Namespace, *,
 
 
 def _handle_tbl_join(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Performs a relational join between two tables on key columns."""
+    """Relational join between two tables on key columns, with optional fuzzy matching.
+
+    Fuzzy behavior:
+      - Only supported when: --fuzzy, single key, and --how left.
+      - Normalization (--key-norm) is applied before exact attempt. Unmatched left keys are then
+        matched to the closest right key by SequenceMatcher if score >= --threshold.
+      - Optional --report writes left_key,right_key,score,method for transparency.
+      - Optional --require-coverage raises if any left key remains unmatched after fuzzy.
+    """
+    import re, difflib
+
     if not args.left or not args.right:
         raise ValueError("Both --left and --right file paths are required for tbl join.")
-    
+
     header_arg = 0 if not args.no_header else None
-    
-    df_left = UIO.read_table(args.left, sep=args.sep, header=header_arg)
+    df_left  = UIO.read_table(args.left,  sep=args.sep, header=header_arg)
     df_right = UIO.read_table(args.right, sep=args.sep, header=header_arg)
-    
+
     keys = [k.strip() for k in args.keys.split(',')]
-    
-    # Validate keys are in both dataframes
     for key in keys:
-        if key not in df_left.columns: raise ValueError(f"Key '{key}' not found in left table: {args.left}")
+        if key not in df_left.columns:  raise ValueError(f"Key '{key}' not found in left table: {args.left}")
         if key not in df_right.columns: raise ValueError(f"Key '{key}' not found in right table: {args.right}")
 
-    merged = pd.merge(
-        df_left, df_right, how=args.how, on=keys,
-        suffixes=(args.lsuffix, args.rsuffix)
-    )
-    
-    # Enforce deterministic column order
-    left_cols = [c for c in df_left.columns if c not in keys]
-    right_cols = [c for c in df_right.columns if c not in keys]
-    
-    # Account for suffixes in right columns
+    # Fast path: no fuzzy
+    if not getattr(args, "fuzzy", False):
+        merged = df_left.merge(df_right, on=keys, how=args.how, suffixes=(args.lsuffix, args.rsuffix))
+        left_cols  = [c for c in df_left.columns  if c not in keys]
+        right_cols = [c for c in df_right.columns if c not in keys]
+        final_right_cols = []
+        for c in right_cols:
+            suffixed_c = f"{c}{args.rsuffix}"
+            if suffixed_c in merged.columns:
+                final_right_cols.append(suffixed_c)
+            elif c in merged.columns:
+                final_right_cols.append(c)
+        final_order = keys + left_cols + final_right_cols
+        return merged[final_order]
+
+    # Fuzzy path constraints
+    if len(keys) != 1:
+        raise ValueError("Fuzzy join currently supports a single key column. Use --keys with one column.")
+    if str(getattr(args, "how", "left")).lower() != "left":
+        raise ValueError("Fuzzy join is currently implemented for --how left only.")
+
+    key = keys[0]
+    norms = []
+    for item in (getattr(args, "key_norm", None) or []):
+        norms.extend([t.strip() for t in str(item).split(",") if t.strip()])
+
+    def apply_norms(s: pd.Series) -> pd.Series:
+        out = s.astype("string").fillna("")
+        for t in norms:
+            if t == "lower":
+                out = out.str.lower()
+            elif t == "upper":
+                out = out.str.upper()
+            elif t == "trim":
+                out = out.str.strip()
+            elif t.startswith("strip_suffix:"):
+                pat = t.split(":", 1)[1]
+                out = out.str.replace(rf"{pat}$", "", regex=True)
+            elif t.startswith("strip_prefix:"):
+                pat = t.split(":", 1)[1]
+                out = out.str.replace(rf"^{pat}", "", regex=True)
+            elif t.startswith("strip:"):
+                chars = t.split(":", 1)[1]
+                out = out.str.replace(f"[{re.escape(chars)}]", "", regex=True)
+            elif t == "rm_leading_zeros":
+                def _rlz(x: str) -> str:
+                    if not x: return x
+                    y = x.lstrip("0")
+                    return y if y != "" else "0"
+                out = out.map(_rlz)
+        return out
+
+    left_norm  = apply_norms(df_left[key]) if norms else df_left[key].astype("string").fillna("")
+    right_norm = apply_norms(df_right[key]) if norms else df_right[key].astype("string").fillna("")
+
+    # Step 1: exact on normalized key
+    L = df_left.copy()
+    R = df_right.copy()
+    L["__key_norm__"] = left_norm
+    R["__key_norm__"] = right_norm
+
+    exact = L.merge(R, on="__key_norm__", how="left", suffixes=(args.lsuffix, args.rsuffix), indicator=True)
+
+    # Identify unmatched left rows
+    if "_merge" in exact.columns:
+        unmatched_mask = exact["_merge"] == "left_only"
+        exact = exact.drop(columns=["_merge"])
+    else:
+        right_cols = [c for c in df_right.columns if c != key]
+        cols_after = set(exact.columns)
+        merged_right_cols = [c for c in cols_after if c not in L.columns or c in right_cols]
+        unmatched_mask = exact[merged_right_cols].isna().all(axis=1)
+
+    # Early out if nothing unmatched
+    if not unmatched_mask.any():
+        left_cols  = [c for c in df_left.columns  if c != key]
+        right_cols = [c for c in df_right.columns if c != key]
+        final_right_cols = []
+        for c in right_cols:
+            suffixed_c = f"{c}{args.rsuffix}"
+            if suffixed_c in exact.columns:
+                final_right_cols.append(suffixed_c)
+            elif c in exact.columns:
+                final_right_cols.append(c)
+        final_order = [key] + left_cols + final_right_cols
+        return exact[final_order]
+
+    # Step 2: fuzzy match unmatched left keys against unique right norms
+    threshold = float(getattr(args, "threshold", 0.9) or 0.9)
+    left_unmatched = L.loc[unmatched_mask, [key, "__key_norm__"]].copy()
+
+    right_unique = R[["__key_norm__", key]].drop_duplicates("__key_norm__")
+    r_map = dict(zip(right_unique["__key_norm__"], right_unique[key]))
+
+    chosen = []
+    for ln, orig_left in zip(left_unmatched["__key_norm__"], left_unmatched[key]):
+        best_norm = None
+        best_score = 0.0
+        for cand in r_map.keys():
+            score = difflib.SequenceMatcher(None, str(ln), str(cand)).ratio()
+            if score > best_score:
+                best_score = score
+                best_norm = cand
+        if best_norm is not None and best_score >= threshold:
+            chosen.append((orig_left, ln, r_map[best_norm], best_norm, best_score, "fuzzy"))
+        else:
+            chosen.append((orig_left, ln, None, None, 0.0, "none"))
+
+    if getattr(args, "report", None):
+        rep = pd.DataFrame(chosen, columns=[f"left_{key}", "left_norm", f"right_{key}", "right_norm", "score", "method"])
+        try:
+            rep.to_csv(args.report, index=False)
+        except Exception as e:
+            raise ValueError(f"Failed to write report to {args.report}: {e}") from e
+
+    if getattr(args, "require_coverage", False):
+        if any(m == "none" for *_, m in chosen):
+            missing = [lk for (lk, *_rest, m) in chosen if m == "none"]
+            raise ValueError(f"Fuzzy join: {len(missing)} left keys unmatched (e.g., {missing[:5]})")
+
+    matched = [t for t in chosen if t[-1] != "none"]
+    if matched:
+        match_df = pd.DataFrame(matched, columns=[f"left_{key}", "left_norm", f"right_{key}", "right_norm", "score", "method"])
+        L2 = L.loc[unmatched_mask, :].copy()
+        L2 = L2.merge(match_df[["left_norm","right_norm"]].rename(columns={"left_norm":"__key_norm__","right_norm":"__match_norm__"}),
+                      on="__key_norm__", how="left")
+        R2 = R.copy()
+        fuzzy_merged = L2.merge(R2, left_on="__match_norm__", right_on="__key_norm__", how="left", suffixes=(args.lsuffix, args.rsuffix))
+        exact.loc[unmatched_mask, :] = fuzzy_merged[exact.columns].values
+
+    left_cols  = [c for c in df_left.columns  if c != key]
+    right_cols = [c for c in df_right.columns if c != key]
     final_right_cols = []
     for c in right_cols:
         suffixed_c = f"{c}{args.rsuffix}"
-        if suffixed_c in merged.columns:
+        if suffixed_c in exact.columns:
             final_right_cols.append(suffixed_c)
-        elif c in merged.columns: # No suffix applied if no overlap
-             final_right_cols.append(c)
+        elif c in exact.columns:
+            final_right_cols.append(c)
+    final_order = [key] + left_cols + final_right_cols
 
-    final_order = keys + left_cols + final_right_cols
-    return merged[final_order]
-
-
+    final = exact
+    for helper in ["__key_norm__", "__match_norm__"]:
+        if helper in final.columns:
+            final = final.drop(columns=[helper])
+    return final[final_order]
 
 
 
@@ -995,6 +1216,8 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     t_clean.add_argument("--keep-punct", action="store_true", help="Keep punctuation.")
     t_clean.add_argument("--keep-case", action="store_true", help="Do not lowercase.")
     t_clean.add_argument("--keep-ascii", action="store_true", help="Do not strip non-ASCII.")
+    t_clean.add_argument("--strip-punct-values", action="store_true",
+                         help="Also strip punctuation from string values (default: keep).")    
     t_clean.set_defaults(handler=_handle_tbl_clean)
 
 
@@ -1012,12 +1235,29 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     t_join.add_argument("--how", default="inner", choices=["left", "right", "outer", "inner"])
     t_join.add_argument("--lsuffix", default="_x", help="Suffix for overlapping columns from left table.")
     t_join.add_argument("--rsuffix", default="_y", help="Suffix for overlapping columns from right table.")
+    # Fuzzy join options (single-key, left-join only for now)
+    t_join.add_argument("--fuzzy", action="store_true",
+                        help="Enable fuzzy matching for keys (supports single key + --how left).")
+    t_join.add_argument("--key-norm", action="append",
+                        help="Repeatable normalization steps, e.g. 'strip_suffix:-\\d+$', 'rm_leading_zeros', 'upper', 'lower', 'trim', 'strip:_'.")
+    t_join.add_argument("--threshold", type=float, default=0.9,
+                        help="Fuzzy match similarity threshold in [0,1] (default: 0.9).")
+    t_join.add_argument("--require-coverage", action="store_true",
+                        help="Error if any left key remains unmatched after exact+fuzzy.")
+    t_join.add_argument("--report",
+                        help="Write CSV report of matches (left_key,right_key,score,method).")
     t_join.set_defaults(handler=_handle_tbl_join, standalone=True)
+
     
     t_sort = tsub.add_parser("sort", help="Sort rows by column values (alias for 'sort rows').")
     t_sort.add_argument("--by", required=True, help="Comma-separated columns to sort by.")
     t_sort.add_argument("--descending", action="store_true")
     t_sort.add_argument("--natural", action="store_true", help="Use natural sort order.")
+    t_sort.add_argument("--date", action="store_true", help="Parse the sort keys as dates.")
+    t_sort.add_argument("--date-format", help="Optional strptime format for dates.")
+    t_sort.add_argument("--numeric", action="store_true",
+                    help="Coerce sort keys to numeric for ordering (data unchanged).")
+
     t_sort.set_defaults(handler=_handle_sort_row)
     
     t_pivot = tsub.add_parser("pivot", help="Pivot a table from long to wide format")
@@ -1075,6 +1315,11 @@ def _attach_sort_group(subparsers: argparse._SubParsersAction) -> None:
     so_rows.add_argument("--by", required=True, help="Comma-separated columns to sort by.")
     so_rows.add_argument("--descending", action="store_true")
     so_rows.add_argument("--natural", action="store_true", help="Use natural sort order.")
+    so_rows.add_argument("--date", action="store_true", help="Parse the sort keys as dates.")
+    so_rows.add_argument("--date-format", help="Optional strptime format for dates.")
+    so_rows.add_argument("--numeric", action="store_true",
+                     help="Coerce sort keys to numeric for ordering (data unchanged).")
+    
     so_rows.set_defaults(handler=_handle_sort_row)
     
     so_cols = sosub.add_parser("cols", help="Sort columns by their names")
@@ -1370,7 +1615,8 @@ def main(argv=None) -> int:
     parser = build_parser()
 
     if not argv:
-        parser.print_help()
+        parser.error("command group is required")
+        #parser.print_help()
         return 0
     
     # Handle group-level help (e.g., 'tblkit col')
