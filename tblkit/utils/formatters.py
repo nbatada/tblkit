@@ -199,4 +199,59 @@ class PluginsAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None) -> None:
         sys.stdout.write("Plugin system is active. Core will report loaded plugins at runtime.\n")
         parser.exit(0)
+
+class CommandsAction(argparse.Action):
+    """
+    argparse Action: --commands → print command tree and exit(0).
+    """
+    def __init__(self, option_strings, dest, nargs=0, **kwargs) -> None:
+        super().__init__(option_strings, dest, nargs=nargs, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None) -> None:
+        # Detect color support like the old 'view tree'
+        use_color = sys.stdout.isatty() and (os.getenv("NO_COLOR") is None)
+        cyan = "\033[96m" if use_color else ""
+        orange = "\033[33m" if use_color else ""
+        reset = "\033[0m" if use_color else ""
+
+        # Top-level subparsers
+        subparsers_actions = [a for a in parser._actions if _is_subparsers_action(a)]
+        if not subparsers_actions:
+            sys.stdout.write("tblkit\n")
+            parser.exit(0)
+
+        top = subparsers_actions[0]
+        choices = sorted(top.choices.items())
+        help_map = {a.dest: (a.help or "") for a in getattr(top, "_choices_actions", [])}
+
+        tree = ["tblkit"]
+        for gi, (gname, gparser) in enumerate(choices):
+            is_last_g = (gi == len(choices) - 1)
+            gpfx = "└── " if is_last_g else "├── "
+            gline = f"{gpfx}{cyan}{gname}{reset}"
+            gpadw = len(gpfx + gname)
+            ghelp = help_map.get(gname, "")
+            # Child actions
+            acts = [a for a in gparser._actions if _is_subparsers_action(a)]
+            if acts:
+                act = acts[0]
+                action_help = {a.dest: (a.help or "") for a in getattr(act, "_choices_actions", [])}
+                ach = sorted(act.choices.items())
+                # Group header
+                tree.append(f"{gline}{' ' * max(0, 30 - gpadw)}  ({ghelp})")
+                for ai, (aname, _) in enumerate(ach):
+                    is_last_a = (ai == len(ach) - 1)
+                    childprefix = "    " if is_last_g else "│   "
+                    apfx = childprefix + ("└── " if is_last_a else "├── ")
+                    ahelp = action_help.get(aname, "")
+                    tree.append(f"{apfx}{orange}{aname}{reset}")
+                    if ahelp:
+                        # align help
+                        padw = len(apfx + aname)
+                        tree[-1] += f"{' ' * max(0, 30 - padw)}  ({ahelp})"
+            else:
+                tree.append(f"{gline}{' ' * max(0, 30 - gpadw)}  ({ghelp})")
+
+        sys.stdout.write("\n".join(tree) + "\n")
+        parser.exit(0)
         

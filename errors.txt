@@ -1,0 +1,52 @@
+....F...............F.......                                             [100%]
+=================================== FAILURES ===================================
+____________________ test_col_cast_float_and_bool_coercion _____________________
+
+    def test_col_cast_float_and_bool_coercion():
+        df = pd.DataFrame({"X":["1.5","2.0","x"], "Y":["True","False","maybe"]})
+        out_f = _handle_col_cast(df, NS(columns="X", to="float"), is_header_present=True)
+        assert out_f["X"].tolist()[:2] == [1.5, 2.0]
+>       out_b = _handle_col_cast(df, NS(columns="Y", to="bool"), is_header_present=True)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_core_args_extended.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tblkit/core.py:161: in _handle_col_cast
+    out[c] = pd.Series([to_bool(v) for v in out[c]]).astype("boolean")
+                        ^^^^^^^^^^
+tblkit/core.py:160: in to_bool
+    return pd.NA if errors != "raise" else (_ for _ in ()).throw(ValueError(f"Bad boolean: {v}"))
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+.0 = <tuple_iterator object at 0x12a1a4d30>
+
+>   return pd.NA if errors != "raise" else (_ for _ in ()).throw(ValueError(f"Bad boolean: {v}"))
+E   ValueError: Bad boolean: maybe
+
+tblkit/core.py:160: ValueError
+__________________________ test_columns_suite_all_ops __________________________
+
+    def test_columns_suite_all_ops():
+        df = pd.DataFrame({"A": ["1", "2", "x"], "B": ["p", "q", "r"], "C": [10, 20, 30]})
+    
+        # add before column B
+        out_add = _handle_col_add(df, NS(columns="B", new_header="Z", value="v"), is_header_present=True)
+        assert out_add.columns.tolist()[:2] == ["A", "Z"]
+    
+        # cast numeric strings to int where possible, keep non-numeric as original
+        out_cast = _handle_col_cast(df, NS(columns="A", to="int"), is_header_present=True)
+>       assert list(out_cast["A"]) == [1, 2, "x"]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_core_comprehensive.py:34: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   ???
+E   TypeError: boolean value of NA is ambiguous
+
+missing.pyx:392: TypeError
+=========================== short test summary info ============================
+FAILED tests/test_core_args_extended.py::test_col_cast_float_and_bool_coercion
+FAILED tests/test_core_comprehensive.py::test_columns_suite_all_ops - TypeErr...
+2 failed, 26 passed in 0.72s

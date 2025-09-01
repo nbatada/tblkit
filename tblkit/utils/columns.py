@@ -43,10 +43,24 @@ def parse_single_col(spec: str, available: Optional[Sequence[str]] = None) -> st
     raise KeyError(f"Unknown column: {s}")
 
 def resolve_columns_advanced(df: pd.DataFrame, specs: Iterable[str]) -> List[str]:
-    """Resolve ranges using names (e.g., A:C) or Excel-style letters (e.g., B:D, AA:AC).
-    Also accepts mixing (e.g., A:C where A is a name and C is a letter). Deduplicates, preserves order."""
+    """
+    Resolve column specifications to concrete column names (order-preserving, de-duplicated).
+    Supports:
+      - Names:           "age,height"
+      - Excel letters:   "A:C", "AA", mixes like "A:height"
+      - Numeric indices: "0:3", "2", "-2:" (0-based; negatives count from end)
+      - Regex:           "re:^score_\\d+$"
+      - Commas in any spec string; multiple spec strings accepted via 'specs' iterable.
+    Raises KeyError/IndexError for unknown/out-of-range references.
+    """
+    from typing import Iterable, List, Optional
+    import re
+    from tblkit.utils.logging import get_logger
+    logger = get_logger(__name__)
+
     names = list(map(str, df.columns))
     name_to_idx = {n: i for i, n in enumerate(names)}
+    n = len(names)
 
     def xl_to_idx(tok: str) -> Optional[int]:
         t = tok.strip().upper()
@@ -57,42 +71,64 @@ def resolve_columns_advanced(df: pd.DataFrame, specs: Iterable[str]) -> List[str
             val = val * 26 + (ord(ch) - 64)  # A=1
         return val - 1  # to 0-based
 
+    def to_idx(tok: str) -> Optional[int]:
+        tok = tok.strip()
+        if tok in name_to_idx:
+            return name_to_idx[tok]
+        if re.fullmatch(r"-?\d+", tok):
+            i = int(tok)
+            return n + i if i < 0 else i
+        x = xl_to_idx(tok)
+        return x
+
+    # Flatten tokens from all spec strings
+    tokens: List[str] = []
+    for s in specs or []:
+        if s is None:
+            continue
+        tokens.extend([t.strip() for t in str(s).split(",") if t.strip()])
+
+    idxs: List[int] = []
+    for tok in tokens:
+        if tok.startswith("re:"):
+            pat = tok[3:]
+            try:
+                rx = re.compile(pat)
+            except re.error as e:
+                raise ValueError(f"Bad regex in column spec '{tok}': {e}") from e
+            for i, name in enumerate(names):
+                if rx.search(name):
+                    idxs.append(i)
+            continue
+
+        if ":" in tok:
+            a, b = tok.split(":", 1)
+            ai = to_idx(a) if a else 0
+            bi = to_idx(b) if b else (n - 1)
+            if ai is None and a:
+                raise KeyError(f"Unknown column bound: {a}")
+            if bi is None and b:
+                raise KeyError(f"Unknown column bound: {b}")
+            # normalize bounds
+            if not (0 <= ai < n) or not (0 <= bi < n):
+                raise IndexError(f"Column range out of bounds: {tok}")
+            lo, hi = (ai, bi) if ai <= bi else (bi, ai)
+            idxs.extend(range(lo, hi + 1))
+            continue
+
+        i = to_idx(tok)
+        if i is None or not (0 <= i < n):
+            raise KeyError(f"Unknown column: {tok}")
+        idxs.append(i)
+
     out: List[str] = []
-    for spec in specs:
-        spec = spec.strip()
-        if ":" in spec:
-            start_tok, end_tok = [s.strip() for s in spec.split(":", 1)]
-            i = name_to_idx.get(start_tok)
-            j = name_to_idx.get(end_tok)
-
-            if i is None:
-                i = xl_to_idx(start_tok)
-            if j is None:
-                j = xl_to_idx(end_tok)
-
-            if i is None or j is None:
-                raise KeyError(f"Unknown column in range: {spec}")
-
-            if not (0 <= i < len(names)) or not (0 <= j < len(names)):
-                raise IndexError(f"Range out of bounds: {spec} over {len(names)} columns")
-
-            rng = range(i, j + 1) if i <= j else range(j, i + 1)
-            out.extend(names[k] for k in rng)
-        else:
-            if spec in name_to_idx:
-                out.append(spec)
-            else:
-                k = xl_to_idx(spec)
-                if k is None or not (0 <= k < len(names)):
-                    raise KeyError(f"Unknown column: {spec}")
-                out.append(names[k])
-
-    # de-duplicate while preserving order
-    seen, uniq = set(), []
-    for c in out:
+    seen = set()
+    for i in idxs:
+        c = names[i]
         if c not in seen:
-            seen.add(c); uniq.append(c)
-    return uniq
+            seen.add(c)
+            out.append(c)
+    return out
 
 def parse_multi_cols(spec: str, available: Optional[Sequence[str]] = None) -> List[str]:
     """

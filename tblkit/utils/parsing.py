@@ -42,3 +42,5 @@ def add_common_io_args(ap: argparse.ArgumentParser) -> None:
     g.add_argument("--seed", type=int,
                    help="Random seed for commands that sample or shuffle.")
     
+    g.add_argument("--commands", action=UFMT.CommandsAction,
+                   help="Show the available commands as a tree and exit.")

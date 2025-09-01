@@ -73,6 +73,33 @@ def _handle_header_rename(df: pd.DataFrame | None, args: argparse.Namespace, *, 
     resolved_map = {UCOL.parse_single_col(k, df.columns): v for k, v in rename_map.items()}
     return df.rename(columns=resolved_map)
 
+def _handle_header_prefix_num(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Prefix columns with incrementing integers: 1_, 2_, ... or a custom format."""
+    if df is None:
+        raise ValueError("header prefix-num expects piped data")
+    fmt = getattr(args, "fmt", None) or "{i}_"
+    start = int(getattr(args, "start", 1) or 1)
+    new_cols = [f"{fmt}".format(i=i) + str(c) for i, c in enumerate(df.columns, start=start)]
+    return df.rename(columns=dict(zip(df.columns, new_cols)))
+
+def _handle_header_add_prefix(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Add a fixed prefix to selected columns (rich selection)."""
+    if df is None:
+        raise ValueError("header add-prefix expects piped data")
+    sel = UCOL.parse_multi_cols(getattr(args, "columns", "") or ",".join(df.columns), df.columns)
+    pre = str(getattr(args, "prefix", "") or "")
+    mapping = {c: (pre + c) for c in sel}
+    return df.rename(columns=mapping)
+
+def _handle_header_add_suffix(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Add a fixed suffix to selected columns (rich selection)."""
+    if df is None:
+        raise ValueError("header add-suffix expects piped data")
+    sel = UCOL.parse_multi_cols(getattr(args, "columns", "") or ",".join(df.columns), df.columns)
+    suf = str(getattr(args, "suffix", "") or "")
+    mapping = {c: (c + suf) for c in sel}
+    return df.rename(columns=mapping)
+
 #-- Column Handlers --
 def _handle_col_select(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     if df is None: raise ValueError("col select expects piped data")
@@ -105,52 +132,111 @@ def _handle_col_select(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
     return df[cols].copy()
 
 def _handle_col_drop(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("col drop expects piped data")
-    cols_to_drop = UCOL.parse_multi_cols(args.columns, df.columns)
-    return df.drop(columns=cols_to_drop)
+    if df is None:
+        raise ValueError("col drop expects piped data")
+    drop_sel = UCOL.parse_multi_cols(args.columns, df.columns)
+    keep_always = set(UCOL.parse_multi_cols(getattr(args, "keep_columns", "") or "", df.columns))
+    if getattr(args, "invert", False):
+        # Keep only listed columns plus forced keep set
+        keep = list(dict.fromkeys(list(drop_sel) + list(keep_always)))
+        return df.loc[:, keep]
+    # Standard drop, but never drop forced keep columns
+    target = [c for c in drop_sel if c not in keep_always]
+    return df.drop(columns=target)
 
 def _handle_col_rename(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     return _handle_header_rename(df, args, is_header_present=is_header_present)
 
-# def _handle_col_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-#     """Cleans string values in specified columns to be machine-readable."""
-#     if df is None: raise ValueError("col clean expects piped data")
+def _handle_col_cast(df, args, column_names=None, **kwargs):
+    """
+    Cast columns to a target dtype.
+    Defaults: int→ignore (keep original on failure), float→coerce, bool→coerce, datetime→coerce, others→raise.
+    A user-provided --errors overrides these defaults.
+    """
+    from tblkit.utils.logging import get_logger
+    from tblkit.utils.columns import resolve_columns_advanced
+    logger = get_logger(__name__)
 
-#     # Basic cleanup function migrated from tblkit v1
-#     def _cleanup_string(s: Any) -> Any:
-#         if s is None or (isinstance(s, float) and pd.isna(s)): return s
-#         s = str(s).strip().lower().replace(' ', '_').replace('-', '_')
-#         s = re.sub(r'[\\./()]+', '_', s)
-#         s = re.sub(r'[^0-9A-Za-z_]+', '', s)
-#         s = re.sub(r'_+', '_', s).strip('_')
-#         return s
+    cols_spec = getattr(args, "columns", None)
+    cols = column_names or (resolve_columns_advanced(df, [cols_spec]) if cols_spec else None)
+    if not cols:
+        raise ValueError("No columns selected for casting. Use --columns.")
 
-#     out = df.copy()
-#     cols_to_process = UCOL.parse_multi_cols(args.columns, df.columns) if args.columns else df.columns.tolist()
-    
-#     if args.exclude:
-#         cols_to_exclude = set(UCOL.parse_multi_cols(args.exclude, df.columns))
-#         cols_to_process = [c for c in cols_to_process if c not in cols_to_exclude]
+    to = (getattr(args, "to", None) or getattr(args, "dtype", None) or "").lower()
+    if not to:
+        raise ValueError("Target dtype is required. Use --to or --dtype.")
 
-#     for col in cols_to_process:
-#         if pd.api.types.is_string_dtype(out[col]) or pd.api.types.is_object_dtype(out[col]):
-#             out[col] = out[col].apply(_cleanup_string)
-            
-#     return out
-
-def _handle_col_cast(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("col cast expects piped data")
+    fmt = getattr(args, "format", None)
+    user_errors = getattr(args, "errors", None)
     out = df.copy()
-    cols = UCOL.parse_multi_cols(args.columns, out.columns)
-    for col in cols:
-        if args.to in ("int", "integer"):
-            s = pd.to_numeric(out[col], errors="coerce")
-            out[col] = s.where(s.notna(), out[col])
-        elif args.to in ("float", "numeric"):
-            s = pd.to_numeric(out[col], errors="coerce")
-            out[col] = s.where(s.notna(), out[col])
-        else:
-            out[col] = out[col].astype(args.to)
+
+    def default_errors_for(dtype_name: str) -> str:
+        if dtype_name in {"int","int64","int32"}:      return "ignore"
+        if dtype_name in {"float","float64","float32"}: return "coerce"
+        if dtype_name in {"bool","boolean"}:            return "coerce"
+        if dtype_name in {"datetime","datetime64"}:     return "coerce"
+        return "raise"
+
+    for c in cols:
+        if c not in out.columns:
+            raise KeyError(f"Unknown column: {c}")
+
+        errors = (user_errors or default_errors_for(to)).lower()
+        if errors not in {"raise","coerce","ignore"}:
+            raise ValueError("--errors must be one of ['coerce','ignore','raise']")
+
+        try:
+            if to in {"int","int64","int32"}:
+                s_num = pd.to_numeric(out[c], errors="coerce")
+                if errors == "ignore":
+                    new_vals = []
+                    for orig, nval in zip(out[c], s_num):
+                        if pd.isna(nval):
+                            new_vals.append(orig)
+                        else:
+                            new_vals.append(int(nval) if float(nval).is_integer() else orig)
+                    out[c] = pd.Series(new_vals, index=out.index)
+                elif errors == "coerce":
+                    nval = s_num.where(s_num.apply(lambda x: pd.isna(x) or float(x).is_integer()))
+                    out[c] = nval.astype("Int64")
+                else:  # raise
+                    nval = pd.to_numeric(out[c], errors="raise")
+                    if not all(float(x).is_integer() for x in nval):
+                        raise ValueError("Non-integer values cannot be cast to Int64 under errors='raise'.")
+                    out[c] = pd.Series([int(x) for x in nval], index=out.index, dtype="Int64")
+
+            elif to in {"float","float64","float32"}:
+                s = pd.to_numeric(out[c], errors=("coerce" if errors != "raise" else "raise"))
+                out[c] = s.astype("float32" if to == "float32" else "float64")
+
+            elif to in {"bool","boolean"}:
+                def to_bool(v):
+                    if pd.isna(v): return pd.NA
+                    t = str(v).strip().lower()
+                    if t in {"1","true","t","yes","y"}:  return True
+                    if t in {"0","false","f","no","n"}:  return False
+                    return pd.NA if errors != "raise" else (_ for _ in ()).throw(ValueError(f"Bad boolean: {v}"))
+                out[c] = pd.Series([to_bool(v) for v in out[c]], index=out.index).astype("boolean")
+
+            elif to in {"str","string"}:
+                out[c] = out[c].astype("string")
+
+            elif to in {"cat","category"}:
+                out[c] = out[c].astype("category")
+
+            elif to in {"datetime","datetime64"}:
+                out[c] = pd.to_datetime(out[c], errors=("coerce" if errors != "raise" else "raise"), format=fmt)
+
+            else:
+                out[c] = out[c].astype(to)
+
+        except Exception as e:
+            if errors == "ignore":
+                logger.debug(f"Ignored casting error for {c} to {to}: {e}")
+            elif errors == "coerce":
+                logger.debug(f"Coerced failures when casting {c} to {to}: {e}")
+            else:
+                raise
     return out
 
 def _handle_col_fillna(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
@@ -165,25 +251,26 @@ def _handle_col_fillna(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
     return out
 
 def _handle_col_split(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("col split expects piped data")
+    if df is None:
+        raise ValueError("col split expects piped data")
     out = df.copy()
     col = UCOL.parse_single_col(args.columns, df.columns)
-    
+
     split_data = out[col].astype(str).str.split(
-        args.delimiter, n=args.maxsplit, expand=True, regex=not args.fixed
+        args.pattern, n=args.maxsplit, expand=True, regex=not args.fixed
     )
 
-    if args.into:
-        new_names = [name.strip() for name in args.into.split(',')]
+    if args.names:
+        new_names = [name.strip() for name in args.names.split(',')]
         if len(new_names) != split_data.shape[1]:
-            raise ValueError(f"Number of names in --into must match resulting columns ({split_data.shape[1]})")
+            raise ValueError(f"Number of names in --names must match resulting columns ({split_data.shape[1]})")
     else:
         new_names = [f"{col}_{i+1}" for i in range(split_data.shape[1])]
 
     split_data.columns = new_names
     out = pd.concat([out, split_data], axis=1)
 
-    if not args.keep:
+    if getattr(args, "inplace", False):
         out = out.drop(columns=[col])
     return out
 
@@ -250,10 +337,33 @@ def _handle_row_tail(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
     if df is None: raise ValueError("row tail expects piped data")
     return df.tail(args.n).copy()
 
-def _handle_row_filter(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("row filter expects piped data")
-    expr_to_run = f"not ({args.expr})" if args.invert else args.expr
-    return df.query(expr_to_run).copy()
+def _handle_row_filter(df: pd.DataFrame, args: argparse.Namespace, **kwargs) -> pd.DataFrame:
+    """
+    Filter rows using a pandas expression. Example: --expr "a > 3 and b == 'x'".
+    If --invert is set, returns the complement.
+    """
+    from tblkit.utils.logging import get_logger
+    logger = get_logger(__name__)
+
+    expr = getattr(args, "expr", None)
+    invert = bool(getattr(args, "invert", False))
+    if not expr or not str(expr).strip():
+        raise ValueError("Row filter requires --expr <query>.")
+
+    # Try numexpr first (fast), then pure python engine.
+    try:
+        kept = df.query(expr, engine="numexpr")
+    except Exception as e1:
+        logger.debug(f"numexpr failed on '{expr}': {e1}; falling back to python engine")
+        try:
+            kept = df.query(expr, engine="python")
+        except Exception as e2:
+            raise ValueError(f"Invalid filter expression: {expr}") from e2
+
+    if invert:
+        # Complement by index
+        return df.loc[~df.index.isin(kept.index)]
+    return kept
 
 def _handle_row_sample(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("row sample expects piped data")
@@ -299,48 +409,138 @@ def _handle_sort_header(df: pd.DataFrame | None, args: argparse.Namespace, *, is
 
 
 #-- Table Handlers --
+# REPLACE lines 466–477 in core.py with this function
+def _handle_tbl_aggregate(df, args, column_names=None, **kwargs):
+    """
+    Group-aggregate.
+    Accepts:
+      - --group/--by <cols>
+      - EITHER --ops "a:sum,b:mean" OR --columns <cols> with --op <fn> OR --funcs "sum,mean"
+    """
+    from tblkit.utils.logging import get_logger
+    from tblkit.utils.columns import resolve_columns_advanced
+    logger = get_logger(__name__)
+
+    by_spec = getattr(args, "by", None) or getattr(args, "group", None)
+    if not by_spec:
+        raise ValueError("Aggregation requires --by/--group <columns>.")
+    by_cols = resolve_columns_advanced(df, [by_spec])
+
+    ops_text = getattr(args, "ops", None)
+    op = getattr(args, "op", None)
+    funcs_text = getattr(args, "funcs", None)
+    cols_text = getattr(args, "columns", None) or column_names
+
+    if ops_text:
+        agg_spec = {}
+        for chunk in str(ops_text).split(","):
+            if not chunk.strip():
+                continue
+            if ":" not in chunk:
+                raise ValueError(f"Bad --ops entry '{chunk}'. Use col:func.")
+            c, fn = chunk.split(":", 1)
+            c = c.strip(); fn = fn.strip()
+            if c not in df.columns:
+                raise KeyError(f"Unknown column in --ops: {c}")
+            agg_spec[c] = fn
+    else:
+        if not cols_text:
+            raise ValueError("Aggregation needs --columns when --ops is not used.")
+        cols = resolve_columns_advanced(df, [cols_text]) if isinstance(cols_text, str) else cols_text
+        if funcs_text:
+            funcs = [f.strip() for f in str(funcs_text).split(",") if f.strip()]
+            if not funcs:
+                raise ValueError("Empty --funcs.")
+            agg_spec = {c: funcs for c in cols}
+        elif op:
+            agg_spec = {c: op for c in cols}
+        else:
+            raise ValueError("Use --ops OR --op+--columns OR --funcs+--columns.")
+
+    out = df.groupby(by=by_cols, dropna=False).agg(agg_spec).reset_index()
+    return out
+
+# REPLACE lines 479–483 in core.py with this function
+def _handle_tbl_melt(df, args, column_names=None, **kwargs):
+    """
+    Melt wide → long.
+    Requires: --id/--id_vars and --values/--value_vars
+    Optional: --var_name, --value_name
+    """
+    from tblkit.utils.logging import get_logger
+    from tblkit.utils.columns import resolve_columns_advanced
+    logger = get_logger(__name__)
+
+    id_spec = getattr(args, "id", None) or getattr(args, "id_vars", None)
+    val_spec = getattr(args, "values", None) or getattr(args, "value_vars", None)
+    if not id_spec or not val_spec:
+        raise ValueError("Melt requires --id/--id_vars and --values/--value_vars.")
+
+    id_vars = resolve_columns_advanced(df, [id_spec])
+    value_vars = resolve_columns_advanced(df, [val_spec])
+
+    var_name = getattr(args, "var_name", None) or getattr(args, "var", None) or "variable"
+    value_name = getattr(args, "value_name", None) or getattr(args, "val", None) or "value"
+
+    out = pd.melt(df, id_vars=id_vars, value_vars=value_vars, var_name=var_name, value_name=value_name)
+    return out
+
+
 def _handle_tbl_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Cleans header and optionally string values in the entire table."""
-    if df is None: raise ValueError("tbl clean expects piped data.")
+    """
+    Clean header and, by default, all string cells:
+      - spaces squeezed and replaced with '_' (unless --keep-spaces)
+      - lowercase (unless --keep-case)
+      - strip non-ASCII (unless --keep-ascii)
+      - remove punctuation (unless --keep-punct)
+      - dedupe header names with sep (default '_') if collisions occur
+    """
+    if df is None:
+        raise ValueError("tbl clean expects piped data.")
+
+    sep = (args.dedupe if getattr(args, "dedupe", None) else "_") or "_"
+    do_lower = not getattr(args, "keep_case", False)
+    do_spaces = not getattr(args, "keep_spaces", False)
+    do_ascii = not getattr(args, "keep_ascii", False)
+    do_punct = not getattr(args, "keep_punct", False)
 
     def _cleanup_string(s: str) -> str:
         new_s = str(s).strip()
-        if args.case == 'lower': new_s = new_s.lower()
-        elif args.case == 'upper': new_s = new_s.upper()
-        if args.spaces is not None: new_s = re.sub(r'\s+', args.spaces, new_s)
-        if args.ascii: new_s = new_s.encode('ascii', 'ignore').decode('ascii')
-        new_s = re.sub(r'[^\w\s-]', '', new_s).strip()
+        if do_lower:
+            new_s = new_s.lower()
+        if do_spaces:
+            # squeeze whitespace → single space, then replace with underscore
+            new_s = re.sub(r"\s+", " ", new_s).strip().replace(" ", "_")
+        if do_ascii:
+            new_s = new_s.encode("ascii", "ignore").decode("ascii")
+        if do_punct:
+            new_s = re.sub(r"[^\w\s-]", "", new_s).strip()
         return new_s
 
-    # 1. Clean Header
-    original_cols = df.columns.to_list()
-    new_cols = [_cleanup_string(c) for c in original_cols]
-    
-    if args.dedupe is not None:
-        counts = {}
-        final_cols = []
-        for c in new_cols:
-            if c in counts:
-                counts[c] += 1
-                final_cols.append(f"{c}{args.dedupe}{counts[c]}")
-            else:
-                counts[c] = 0
-                final_cols.append(c)
-        new_cols = final_cols
-    
-    df.columns = new_cols
+    # 1) Header
+    original = list(df.columns)
+    new_cols = [_cleanup_string(c) for c in original]
+    # dedupe
+    seen = {}
+    for i, c in enumerate(new_cols):
+        if c not in seen:
+            seen[c] = 1
+            continue
+        k = seen[c] + 1
+        while f"{c}{sep}{k}" in seen:
+            k += 1
+        new_cols[i] = f"{c}{sep}{k}"
+        seen[new_cols[i]] = 1
+    df = df.rename(columns=dict(zip(original, new_cols)))
 
-    # 2. Clean Values (if requested)
-    if not args.header_only:
-        cols_to_exclude = set(UCOL.parse_multi_cols(args.exclude, df.columns)) if args.exclude else set()
-        
+    # 2) Values (unless header-only)
+    if not getattr(args, "header_only", False):
+        exclude = set(UCOL.parse_multi_cols(getattr(args, "exclude", "") or "", df.columns))
         for col in df.columns:
-            if col in cols_to_exclude:
+            if col in exclude:
                 continue
-            # Clean columns that are object/string type
             if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
                 df[col] = df[col].apply(lambda x: _cleanup_string(x) if pd.notna(x) else x)
-
     return df
 
 def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
@@ -365,14 +565,34 @@ def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
     # Preserve original column order
     return squashed_df[group_cols + agg_cols]
 
-def _handle_tbl_pivot(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("tbl pivot expects piped data")
-    index_cols = UCOL.parse_multi_cols(args.index, df.columns)
-    pivot_cols = UCOL.parse_single_col(args.columns, df.columns)
-    value_cols = UCOL.parse_single_col(args.values, df.columns)
-    pivoted = df.pivot_table(index=index_cols, columns=pivot_cols, values=value_cols, aggfunc=args.agg).reset_index()
-    pivoted.columns.name = None
-    return pivoted
+def _handle_tbl_pivot(df: pd.DataFrame, args: argparse.Namespace, **kwargs) -> pd.DataFrame:
+    """
+    Pivot long → wide with aggregation (default agg is 'first').
+    Requires: --index <col>, --columns <col>, --value <col>
+    Optional: --agg <func> (e.g., sum/mean/max)
+    """
+    from tblkit.utils.logging import get_logger
+    from tblkit.utils.columns import resolve_columns_advanced
+    logger = get_logger(__name__)
+
+    idx_spec = getattr(args, "index", None)
+    col_spec = getattr(args, "columns", None)
+    val_spec = getattr(args, "value", None) or getattr(args, "values", None)
+    agg = getattr(args, "agg", None) or "first"
+
+    if not (idx_spec and col_spec and val_spec):
+        raise ValueError("Pivot requires --index, --columns, and --value.")
+
+    index = resolve_columns_advanced(df, [idx_spec])
+    columns = resolve_columns_advanced(df, [col_spec])
+    values = resolve_columns_advanced(df, [val_spec])
+
+    if len(index) != 1 or len(columns) != 1 or len(values) != 1:
+        raise ValueError("Pivot expects single columns for index/columns/value.")
+
+    pv = pd.pivot_table(df, index=index[0], columns=columns[0], values=values[0], aggfunc=agg).reset_index()
+    pv.columns.name = None
+    return pv
 
 def _handle_tbl_concat(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """
@@ -463,24 +683,7 @@ def _handle_tbl_concat(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
     return pd.concat(all_dfs, ignore_index=True, sort=False)
 
 
-def _handle_tbl_aggregate(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("tbl aggregate expects piped data")
-    group_cols = UCOL.parse_multi_cols(args.group, df.columns)
-    if args.columns:
-        agg_cols = UCOL.parse_multi_cols(args.columns, df.columns)
-    else:
-        agg_cols = df.select_dtypes(include=np.number).columns.tolist()
 
-    funcs = [f.strip() for f in args.funcs.split(',')]
-    agg_dict = {col: funcs for col in agg_cols}
-
-    return df.groupby(group_cols).agg(agg_dict).reset_index()
-
-def _handle_tbl_melt(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
-    if df is None: raise ValueError("tbl melt expects piped data")
-    id_vars = UCOL.parse_multi_cols(args.id_vars, df.columns)
-    value_vars = UCOL.parse_multi_cols(args.value_vars, df.columns) if args.value_vars else None
-    return pd.melt(df, id_vars=id_vars, value_vars=value_vars, var_name=args.var_name, value_name=args.value_name)
 
 def _handle_tbl_transpose(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("tbl transpose expects piped data")
@@ -533,79 +736,6 @@ def _handle_view_frequency(df: pd.DataFrame | None, args: argparse.Namespace, *,
 
 
 
-def _handle_view_tree(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> None:
-    """Prints a nicely aligned and colored ASCII tree of the command structure."""
-    import os
-    parser = build_parser()
-    tree_items = []
-
-    # Define colors
-    use_color = sys.stdout.isatty() and os.getenv("NO_COLOR") is None
-    cyan, orange, reset = ("", "", "")
-    if use_color:
-        cyan = "\033[96m"    # Cyan for groups
-        orange = "\033[33m"  # Yellow/Orange for actions
-        reset = "\033[0m"
-
-    # First pass: Collect all groups and actions
-    subparsers_actions = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
-    if not subparsers_actions:
-        return
-
-    top_level_parsers = subparsers_actions[0].choices
-    group_help_map = {a.dest: a.help or '' for a in subparsers_actions[0]._choices_actions}
-    groups = sorted(top_level_parsers.items())
-    
-    for i, (name, group_parser) in enumerate(groups):
-        is_last_group = (i == len(groups) - 1)
-        tree_items.append({
-            'prefix': "└── " if is_last_group else "├── ",
-            'name': name, 'help': group_help_map.get(name, ''), 'level': 0
-        })
-        
-        action_parsers_actions = [a for a in group_parser._actions if isinstance(a, argparse._SubParsersAction)]
-        if not action_parsers_actions: continue
-            
-        action_help_map = {a.dest: a.help or '' for a in action_parsers_actions[0]._choices_actions}
-        actions = sorted(action_parsers_actions[0].choices.items())
-        
-        for j, (action_name, _) in enumerate(actions):
-            is_last_action = (j == len(actions) - 1)
-            child_prefix = "    " if is_last_group else "│   "
-            action_tree_prefix = "└── " if is_last_action else "├── "
-            tree_items.append({
-                'prefix': child_prefix + action_tree_prefix,
-                'name': action_name, 'help': action_help_map.get(action_name, ''), 'level': 1
-            })
-
-    # Second pass: Calculate alignment and format output
-    if not tree_items:
-        print("tblkit")
-        return
-
-    # Calculate width based on the visible characters, not the raw string length with color codes
-    max_width = max(len(f"{item['prefix']}{item['name']}") for item in tree_items)
-    
-    output = ["tblkit"]
-    for item in tree_items:
-        color = orange if item['level'] == 0 else cyan
-        colored_name = f"{color}{item['name']}{reset}"
-        
-        # Manually construct the line to handle color codes correctly for padding
-        prefix_and_name = f"{item['prefix']}{item['name']}"
-        padding = " " * (max_width - len(prefix_and_name))
-        
-        # Reconstruct the colored version for printing
-        full_first_col = f"{item['prefix']}{colored_name}"
-        
-        output.append(f"{full_first_col}{padding}  ({item['help']})")
-
-    print("\n".join(output))
-    return None
-
-# In core.py, within the #region Handlers
-
-#-- [TIER 0] Table Handlers --
 
 def _handle_tbl_join(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """Performs a relational join between two tables on key columns."""
@@ -675,16 +805,44 @@ def _handle_col_replace(df: pd.DataFrame | None, args: argparse.Namespace, *, is
     return out
 
 def _handle_col_strip(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Trims whitespace from values in selected columns."""
-    if df is None: raise ValueError("col strip expects piped data.")
+    """
+    Trim/squeeze whitespace; optional substring strip from left/right; fixed-count strip.
+    Defaults: --squeeze is True (collapse internal whitespace to single space).
+    """
+    if df is None:
+        raise ValueError("col strip expects piped data.")
     out = df.copy()
     cols = UCOL.parse_multi_cols(args.columns, out.columns)
-    
+
+    do_squeeze = not getattr(args, "no_squeeze", False)
+
     for col in cols:
         if pd.api.types.is_string_dtype(out[col]) or pd.api.types.is_object_dtype(out[col]):
-            out[col] = out[col].str.strip()
-            if args.collapse:
-                out[col] = out[col].str.replace(r'\s+', ' ', regex=True)
+            s = out[col].astype("string")
+            s = s.str.strip()
+            if do_squeeze:
+                s = s.str.replace(r"\s+", " ", regex=True)
+
+            # Substring strip from left/right
+            if getattr(args, "lstrip_substr", None):
+                sub = str(args.lstrip_substr)
+                s = s.map(lambda v: v[len(sub):] if v is not None and v.startswith(sub) else v)
+            if getattr(args, "rstrip_substr", None):
+                sub = str(args.rstrip_substr)
+                s = s.map(lambda v: v[:-len(sub)] if v is not None and v.endswith(sub) else v)
+
+            # Fixed-count strip with direction
+            n = int(getattr(args, "strip_num_characters", 0) or 0)
+            if n > 0:
+                if getattr(args, "lstrip", False) and not getattr(args, "rstrip", False):
+                    s = s.str.slice(n)
+                elif getattr(args, "rstrip", False) and not getattr(args, "lstrip", False):
+                    s = s.str.slice(stop=-n)
+                else:
+                    # If both or neither specified, do nothing to avoid surprises
+                    pass
+
+            out[col] = s
     return out
 
 def _handle_col_move(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
@@ -747,26 +905,26 @@ def _handle_col_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
             out[col] = s
     return out
 
-#-- [TIER 1] Row Handlers --
+#-- Row Handlers --
 
 def _handle_row_drop(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Drops rows by their 1-based indices."""
-    if df is None: raise ValueError("row drop expects piped data.")
-    
-    indices_to_drop = set()
+    """Drop rows by 1-based indices; with -v/--invert keep only those."""
+    if df is None:
+        raise ValueError("row drop expects piped data.")
+    indices = set()
     for part in args.indices.split(','):
-        part = part.strip()
-        if '-' in part:
-            start, end = part.split('-', 1)
-            start = int(start)
-            end = int(end) if end else len(df)
-            indices_to_drop.update(range(start, end + 1))
+        s = part.strip()
+        if '-' in s:
+            a, b = s.split('-', 1)
+            a = int(a)
+            b = int(b) if b else len(df)
+            indices.update(range(a, b + 1))
         else:
-            indices_to_drop.add(int(part))
-            
-    # Convert 1-based to 0-based indices for pandas
-    zero_based_indices = [i - 1 for i in indices_to_drop if 1 <= i <= len(df)]
-    return df.drop(index=zero_based_indices)
+            indices.add(int(s))
+    zero = sorted(i - 1 for i in indices if 1 <= i <= len(df))
+    if getattr(args, "invert", False):
+        return df.iloc[zero, :].copy()
+    return df.drop(index=zero)
 
 def _handle_row_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """Adds a new row with specified values."""
@@ -789,39 +947,42 @@ def _handle_row_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_hea
         df_bottom = df.iloc[pos:]
         return pd.concat([df_top, new_row, df_bottom], ignore_index=True)
 
-#-- [TIER 1] View Handlers --
 def _handle_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Applies slicing and returns a DataFrame for viewing."""
-    if df is None: raise ValueError("view expects piped data.")
-    
-    if args.max_rows: df = df.head(args.max_rows)
-    if args.max_cols: df = df.iloc[:, :args.max_cols]
-    return df
+    """Returns a DataFrame slice for viewing (no row limiting)."""
+    if df is None:
+        raise ValueError("view expects piped data.")
+    out = df
+    # Rich column selection (optional)
+    if getattr(args, "columns", None):
+        sel = UCOL.parse_multi_cols(args.columns, out.columns)
+        out = out.loc[:, sel]
+    # Keep max-cols if provided
+    if getattr(args, "max_cols", None):
+        out = out.iloc[:, : args.max_cols]
+    return out
 
 def _attach_view_group(subparsers: argparse._SubParsersAction) -> None:
-    """Attaches the 'view' command group and its actions."""
-    p_view = subparsers.add_parser("view", help="Data inspection and summarization", formatter_class=UFMT.CommandGroupHelpFormatter)
-    vsub = p_view.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
-    
-    v_table = vsub.add_parser("table", help="Pretty-print a table for display.")
-    v_table.add_argument("--max-rows", type=int, help="Limit output to the first N rows.")
-    v_table.add_argument("--max-cols", type=int, help="Limit output to the first N columns.")
-    v_table.set_defaults(handler=_handle_view)
-    
-    v_freq = vsub.add_parser("frequency", help="Show top N values per column.")
-    v_freq.add_argument("-c", "--columns", help="Columns to analyze (default: all string columns).")
-    v_freq.add_argument("-n", type=int, default=5, help="Number of top values to show.")
-    v_freq.add_argument("--all-columns", action="store_true", help="Analyze all columns, not just string ones.")
-    v_freq.set_defaults(handler=_handle_view_frequency)
-
-    v_tree = vsub.add_parser("tree", help="Show the command structure as an ASCII tree.")
-    v_tree.set_defaults(handler=_handle_view_tree)
+    """Attaches the simplified 'view' command (pretty-print only)."""
+    p_view = subparsers.add_parser(
+        "view",
+        help="Pretty-print a table (ASCII, non-folding).",
+        formatter_class=UFMT.CommandGroupHelpFormatter,
+    )
+    # Options: max-cols retained; max-rows removed; add truncation & rich column selection
+    p_view.add_argument("--max-cols", type=int, help="Limit to first N columns.")
+    p_view.add_argument("--max-col-width", type=int, default=40,
+                        help="Truncate each column to this width (default: 40).")
+    p_view.add_argument("--show-full", action="store_true",
+                        help="Do not truncate wide fields (disables --max-col-width).")
+    p_view.add_argument("-c", "--columns", help="Rich column selection (name/glob/pos/range/regex).")
+    p_view.set_defaults(handler=_handle_view)
     
 def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     """Attaches the 'tbl' command group and its actions."""
     p_tbl = subparsers.add_parser("tbl", help="Whole-table operations", formatter_class=UFMT.CommandGroupHelpFormatter)
     tsub = p_tbl.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
+    # clean
     t_clean = tsub.add_parser("clean", help="Clean headers and string values throughout the table.")
     t_clean.add_argument("--case", choices=["lower", "upper"], help="Convert case.")
     t_clean.add_argument("--spaces", help="Character to replace whitespace with.")
@@ -829,8 +990,21 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     t_clean.add_argument("--dedupe", help="Character for de-duplicating header names.")
     t_clean.add_argument("--header-only", action="store_true", help="Only clean the header, not cell values.")
     t_clean.add_argument("--exclude", help="Comma-separated columns to exclude from value cleaning.")
+    # Inverse knobs for the sensible defaults (applied in handler)
+    t_clean.add_argument("--keep-spaces", action="store_true", help="Keep spaces as-is (no squeeze/underscore).")
+    t_clean.add_argument("--keep-punct", action="store_true", help="Keep punctuation.")
+    t_clean.add_argument("--keep-case", action="store_true", help="Do not lowercase.")
+    t_clean.add_argument("--keep-ascii", action="store_true", help="Do not strip non-ASCII.")
     t_clean.set_defaults(handler=_handle_tbl_clean)
-    
+
+
+    t_freq = tsub.add_parser("frequency", help="Show top N values per column.")
+    t_freq.add_argument("-c", "--columns", help="Columns to analyze (default: all string columns).")
+    t_freq.add_argument("-n", type=int, default=5, help="Number of top values to show.")
+    t_freq.add_argument("--all-columns", action="store_true", help="Analyze all columns, not just string ones.")
+    t_freq.set_defaults(handler=_handle_view_frequency)
+
+
     t_join = tsub.add_parser("join", help="Relational join between two tables.")
     t_join.add_argument("--left", required=True, help="Path to the left table.")
     t_join.add_argument("--right", required=True, help="Path to the right table.")
@@ -952,6 +1126,8 @@ def _attach_row_group(subparsers: argparse._SubParsersAction) -> None:
     
     r_drop = rsub.add_parser("drop", help="Drop rows by 1-based index.")
     r_drop.add_argument("--indices", required=True, help="Comma-separated indices or ranges (e.g., '1,3,10-12').")
+    r_drop.add_argument("-v", "--invert", action="store_true", help="Keep only the specified indices (inverse drop).")
+
     r_drop.set_defaults(handler=_handle_row_drop)
     
     r_add = rsub.add_parser("add", help="Add a row with specified values.")
@@ -975,65 +1151,37 @@ def _attach_col_group(subparsers: argparse._SubParsersAction) -> None:
     case_group = c_clean.add_mutually_exclusive_group()
     case_group.add_argument("--lower", action="store_true", help="Convert to lowercase.")
     case_group.add_argument("--upper", action="store_true", help="Convert to uppercase.")
+    c_clean.add_argument("--spaces", help="Replace whitespace with this character.")
+    c_clean.add_argument("--ascii", action="store_true", help="Strip non-ASCII.")
     c_clean.add_argument("--unicode-nfkc", action="store_true", help="Apply NFKC Unicode normalization.")
     c_clean.set_defaults(handler=_handle_col_clean)
     
     c_drop = csub.add_parser("drop", help="Drop columns by name/glob/position/regex")
-    c_drop.add_argument("-c", "--columns", required=True, help="Columns to drop.")
+    c_drop.add_argument("-c", "--columns", required=True, help="Columns to drop (rich selector).")
+    c_drop.add_argument("-v", "--invert", action="store_true", help="Keep only these columns (inverse drop).")
+    c_drop.add_argument("--keep-columns", help="Columns to always retain even if --invert is used.")
     c_drop.set_defaults(handler=_handle_col_drop)
     
     c_rename = csub.add_parser("rename", help="Rename column(s) via map string")
     c_rename.add_argument("--map", required=True, help="Map of 'old1:new1,old2:new2'")
     c_rename.set_defaults(handler=_handle_col_rename)
     
-    c_cast = csub.add_parser("cast", help="Cast columns to a new type")
-    c_cast.add_argument("-c", "--columns", required=True)
-    c_cast.add_argument("--to", required=True, help="Target data type (e.g., int, float, str)")
-    c_cast.set_defaults(handler=_handle_col_cast)
-    
-    c_fillna = csub.add_parser("fillna", help="Fill missing values in columns")
-    c_fillna.add_argument("-c", "--columns", required=True)
-    c_fillna.add_argument("-v", "--value", required=True, help="Value to fill with.")
-    c_fillna.set_defaults(handler=_handle_col_fillna)
-    
-    c_split = csub.add_parser("split", help="Split a column into multiple new columns")
-    c_split.add_argument("-c", "--columns", required=True, help="Single column to split.")
-    c_split.add_argument("-d", "--delimiter", required=True, help="Delimiter to split on.")
-    c_split.add_argument("--maxsplit", type=int, default=-1, help="Maximum number of splits.")
-    c_split.add_argument("--fixed", action="store_true", help="Treat delimiter as literal string.")
-    c_split.add_argument("--into", help="Comma-separated names for new columns.")
-    c_split.add_argument("--keep", action="store_true", help="Keep original column.")
-    c_split.set_defaults(handler=_handle_col_split)
-    
-    c_add = csub.add_parser("add", help="Add a new column")
-    c_add.add_argument("-c", "--columns", required=True, help="Column to position new column next to.")
-    c_add.add_argument("--new-header", required=True, help="Name for the new column.")
-    c_add.add_argument("-v", "--value", help="Static value for the new column.")
-    c_add.set_defaults(handler=_handle_col_add)
-    
-    c_join = csub.add_parser("join", help="Join values from multiple columns into a new column.")
-    c_join.add_argument("-c", "--columns", required=True)
-    c_join.add_argument("-d", "--delimiter", default="", help="Delimiter between values.")
-    c_join.add_argument("-o", "--output", required=True, help="Name for the new output column.")
-    c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
-    c_join.set_defaults(handler=_handle_col_join)
-    
-    c_eval = csub.add_parser("eval", help="Create a column by evaluating an expression.")
-    c_eval.add_argument("--expr", required=True, help="A pandas-compatible expression string.")
-    c_eval.add_argument("-o", "--output", required=True, help="Name for the new column.")
-    c_eval.set_defaults(handler=_handle_col_eval)
-    
-    c_replace = csub.add_parser("replace", help="Replace values in selected columns.")
+    c_replace = csub.add_parser("replace", help="Value replacement in selected columns.")
     c_replace.add_argument("-c", "--columns", required=True)
-    c_replace.add_argument("--from", dest="from_val", required=True, help="Comma-separated values to replace.")
-    c_replace.add_argument("--to", dest="to_val", required=True, help="Comma-separated replacement values.")
-    c_replace.add_argument("--regex", action="store_true", help="Treat --from values as regex patterns.")
+    c_replace.add_argument("--from", dest="vals_from", required=True, help="Comma-separated values to replace.")
+    c_replace.add_argument("--to", dest="vals_to", required=True, help="Comma-separated replacement values.")
+    c_replace.add_argument("--regex", action="store_true", help="Treat replacement keys as regex.")
     c_replace.add_argument("--na-only", action="store_true", help="Only replace missing (NA) values.")
     c_replace.set_defaults(handler=_handle_col_replace)
     
-    c_strip = csub.add_parser("strip", help="Trim whitespace from string values.")
+    c_strip = csub.add_parser("strip", help="Trim/squeeze whitespace; optional substring/fixed-count strip.")
     c_strip.add_argument("-c", "--columns", required=True)
-    c_strip.add_argument("--collapse", action="store_true", help="Collapse internal whitespace to a single space.")
+    c_strip.add_argument("--no-squeeze", action="store_true", help="Do not collapse internal whitespace.")
+    c_strip.add_argument("--lstrip-substr", help="Substring to strip from the left, if present.")
+    c_strip.add_argument("--rstrip-substr", help="Substring to strip from the right, if present.")
+    c_strip.add_argument("--strip-num-characters", type=int, help="Fixed number of characters to strip.")
+    c_strip.add_argument("--lstrip", action="store_true", help="When using --strip-num-characters, strip from left.")
+    c_strip.add_argument("--rstrip", action="store_true", help="When using --strip-num-characters, strip from right.")
     c_strip.set_defaults(handler=_handle_col_strip)
     
     c_move = csub.add_parser("move", help="Reorder columns by moving a selection.")
@@ -1049,6 +1197,29 @@ def _attach_col_group(subparsers: argparse._SubParsersAction) -> None:
     c_extract.add_argument("--drop-source", action="store_true", help="Drop the original source column.")
     c_extract.set_defaults(handler=_handle_col_extract)
 
+    c_split = csub.add_parser("split", help="Split a column by pattern into multiple columns")
+    c_split.add_argument("-c", "--columns", required=True, help="Single column to split.")
+    c_split.add_argument("--pattern", required=True, help="Split pattern (regex by default).")
+    c_split.add_argument("--fixed", action="store_true", help="Treat pattern as a literal substring, not regex.")
+    c_split.add_argument("--maxsplit", type=int, default=-1, help="Maximum number of splits (-1 for all).")
+    c_split.add_argument("-n", "--names", help="Comma-separated names for new columns.")
+    c_split.add_argument("--inplace", action="store_true", help="Drop the source column after split.")
+    c_split.set_defaults(handler=_handle_col_split)
+    
+    c_add = csub.add_parser("add", help="Add a new column")
+    c_add.add_argument("-c", "--columns", required=True, help="Column to position new column next to.")
+    c_add.add_argument("--new-header", required=True, help="Name for the new column.")
+    c_add.add_argument("-v", "--value", help="Static value for the new column.")
+    c_add.set_defaults(handler=_handle_col_add)
+    
+    c_join = csub.add_parser("join", help="Join values from multiple columns into a new column.")
+    c_join.add_argument("-c", "--columns", required=True)
+    c_join.add_argument("-d", "--delimiter", default="", help="Delimiter between values.")
+    c_join.add_argument("-o", "--output", required=True, help="Name for the new output column.")
+    c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
+    c_join.set_defaults(handler=_handle_col_join)
+
+#----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction) -> None:
     """Attaches the 'header' command group and its actions."""
     p_header = subparsers.add_parser("header", help="Header operations", formatter_class=UFMT.CommandGroupHelpFormatter)
@@ -1076,7 +1247,24 @@ def _attach_header_group(subparsers: argparse._SubParsersAction) -> None:
     h_clean.add_argument("--dedupe", help="Character to use as a separator for de-duplicating names.")
     h_clean.set_defaults(handler=_handle_tbl_clean)
     
+    # In _attach_header_group(...) — add these three subparsers near the end:
 
+    h_prefix_num = hsub.add_parser("prefix-num", help="Prefix headers with 1_, 2_, ... (or custom fmt).")
+    h_prefix_num.add_argument("--fmt", default="{i}_", help="Format string with {i} (default: '{i}_').")
+    h_prefix_num.add_argument("--start", type=int, default=1, help="Starting integer (default: 1).")
+    h_prefix_num.set_defaults(handler=_handle_header_prefix_num)
+    
+    h_add_prefix = hsub.add_parser("add-prefix", help="Add a fixed prefix to columns.")
+    h_add_prefix.add_argument("--prefix", required=True, help="Prefix text.")
+    h_add_prefix.add_argument("-c", "--columns", help="Rich selection (default: all).")
+    h_add_prefix.set_defaults(handler=_handle_header_add_prefix)
+    
+    h_add_suffix = hsub.add_parser("add-suffix", help="Add a fixed suffix to columns.")
+    h_add_suffix.add_argument("--suffix", required=True, help="Suffix text.")
+    h_add_suffix.add_argument("-c", "--columns", help="Rich selection (default: all).")
+    h_add_suffix.set_defaults(handler=_handle_header_add_suffix)
+
+    
 def _attach_stable_groups(subparsers: argparse._SubParsersAction) -> None:
     """Attaches all stable command groups to the main parser."""
     _attach_header_group(subparsers)
@@ -1095,7 +1283,18 @@ def safe_register(mod, subparsers, utils_api, logger):
         logger.warning("Plugin failed to load: %s (%s)", getattr(mod, "__name__", mod), e)
         return False
 
-# In core.py (replace the entire build_parser function)
+
+def _add_global_io_flags(p):
+    """
+    Global I/O flags available to all subcommands.
+    """
+    p.add_argument("--sep", default="\t",
+                   help="Input delimiter for reading tables (default: \\t).")
+    p.add_argument("--output-sep", dest="output_sep", default="\t",
+                   help="Output delimiter when printing tables (default: \\t).")
+    p.add_argument("--encoding", default="utf-8",
+                   help="File encoding for reading inputs (default: utf-8).")
+    
 
 def build_parser() -> argparse.ArgumentParser:
     ap = UFMT.CustomArgumentParser(
@@ -1114,12 +1313,11 @@ def build_parser() -> argparse.ArgumentParser:
     subs = ap.add_subparsers(dest="group", metavar="group", required=True)
     _attach_stable_groups(subs)
     
-    # --- ADD THIS LOGIC ---
     # Load plugins so their commands are available
     utils_api = UtilsAPI()
     logger = ULOG.get_logger("tblkit.core")
     _load_plugins(subs, utils_api, logger)
-    # ----------------------
+
     
     return ap
 
@@ -1152,7 +1350,7 @@ def run_handler(df, args, is_header_present, logger):
     if isinstance(res, pd.DataFrame):
         if getattr(args, "pretty", False):
             # Preview to stderr instead of writing a file/STDOUT.
-            UIO.pretty_print(res)
+            UIO.pretty_print(res, args=args, stream='stdout')
         else:
             out_sep = getattr(args, "output_sep", None) or getattr(args, "sep", "\t")
             UIO.write_table(
