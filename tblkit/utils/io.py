@@ -37,11 +37,33 @@ def read_table(path: Optional[str],
       - header=0 includes header; header=None for headerless
       - on_bad_lines: 'error' | 'warn' | 'skip' (pandas >=1.3)
     """
-    source = sys.stdin if path in (None, "-") else path
-    use_sep = _normalize_sep(sep)
+    import io as _io
+    from pandas.errors import EmptyDataError, ParserError
 
-    # Use python engine only when necessary (regex or multi-char separators)
-    need_python = (len(use_sep) > 1) or (use_sep.startswith("\\") or bool(re.search(r"\\|[\[\]\+\*\?\|\(\)]", use_sep)))
+    use_sep = _normalize_sep(sep)
+    need_python = (len(use_sep) > 1) or (use_sep.startswith("\\")
+                    or bool(re.search(r"\\|[\[\]\+\*\?\|\(\)]", use_sep)))
+
+    # Buffer stdin so we can detect empties/404/HTML and still parse once.
+    if path in (None, "-"):
+        raw = sys.stdin.buffer.read()
+        try:
+            text = raw.decode(encoding, errors="replace")
+        except Exception:
+            text = raw.decode("utf-8", errors="replace")
+
+        sample = text.strip()
+        if not sample:
+            raise ValueError("No input data received on stdin.")
+        if len(sample) <= 64 and "not found" in sample.lower():
+            raise ValueError("Input looks like a 404/Not Found payload. Check the URL/path.")
+        if "<html" in sample[:256].lower() or "<!doctype" in sample[:256].lower():
+            raise ValueError("Input looks like HTML, not a delimited table. Use a raw file URL.")
+        source = _io.StringIO(text)
+        where = "stdin"
+    else:
+        source = path
+        where = str(path)
 
     try:
         df = pd.read_csv(
@@ -56,7 +78,6 @@ def read_table(path: Optional[str],
         )
         return df
     except TypeError as te:
-        # Fallback for very old pandas without on_bad_lines
         if "on_bad_lines" in str(te):
             df = pd.read_csv(
                 source,
@@ -69,8 +90,9 @@ def read_table(path: Optional[str],
             )
             return df
         raise
+    except (EmptyDataError, ParserError) as e:
+        raise ValueError(f"Failed to read table from {where}: {e}") from e
     except Exception as e:
-        where = "stdin" if source is sys.stdin else str(source)
         raise ValueError(f"Failed to read table from {where}: {e}") from e
 
 def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None:

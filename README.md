@@ -111,7 +111,8 @@ tblkit tbl --help      # whole-table operations (clean, join, sort, …)
 ## Sample data for testing
 
 ```bash
-curl -L https://raw.githubusercontent.com/nbatada/tblkit/main/examples/sp500_below_200dma.sample.csv   | tblkit --sep csv view | less -S
+curl -L https://raw.githubusercontent.com/nbatada/tblkit/main/tblkit/examples/sp500_below_200dma.sample.csv \
+  | tblkit --sep csv view | head -n 10
 ```
 
 ---
