@@ -165,7 +165,14 @@ def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
     out = sys.stdout if path in (None, "-") else open(path, "w", encoding=encoding)
     close = (out is not sys.stdout)
     try:
-        df.to_csv(out, sep=_normalize_sep(sep), index=index, header=header, na_rep=na_rep)
+        out_sep = _normalize_sep(sep)
+        # pandas.to_csv requires a single-character delimiter (no regex).
+        if not out_sep or len(out_sep) != 1:
+            if out_sep == r"\s+":
+                out_sep = " "
+            else:
+                out_sep = (str(out_sep)[:1] or ",")
+        df.to_csv(out, sep=out_sep, index=index, header=header, na_rep=na_rep)
     except BrokenPipeError:
         return
     finally:
