@@ -110,15 +110,8 @@ tblkit tbl --help      # whole-table operations (clean, join, sort, …)
 
 ## Sample data for testing
 
-Include a tiny sample so users can try commands immediately.
-
-**Option A (recommended)**: add a truncated dataset to the repo:
-- Put a ~10–50 row CSV at `examples/sp500_below_200dma.sample.csv`.
-- Keep sensitive data out; no large files needed (avoid LFS).
-
-**Option B:** host a raw file and show a one-liner:
 ```bash
-curl -L https://raw.githubusercontent.com/<you>/tblkit/main/examples/sp500_below_200dma.sample.csv   | tblkit --sep csv view | less -S
+curl -L https://raw.githubusercontent.com/nbatada/tblkit/main/examples/sp500_below_200dma.sample.csv   | tblkit --sep csv view | less -S
 ```
 
 ---
