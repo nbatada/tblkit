@@ -1182,12 +1182,12 @@ def _handle_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header
         out = out.iloc[:, : args.max_cols]
     return out
 
-def _attach_view_group(subparsers: argparse._SubParsersAction) -> None:
+def _attach_view_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the simplified 'view' command (pretty-print only)."""
     p_view = subparsers.add_parser(
         "view",
         help="Pretty-print a table (ASCII, non-folding).",
-        formatter_class=UFMT.CommandGroupHelpFormatter,
+        formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents,
     )
     # Options: max-cols retained; max-rows removed; add truncation & rich column selection
     p_view.add_argument("--max-cols", type=int, help="Limit to first N columns.")
@@ -1198,9 +1198,11 @@ def _attach_view_group(subparsers: argparse._SubParsersAction) -> None:
     p_view.add_argument("-c", "--columns", help="Rich column selection (name/glob/pos/range/regex).")
     p_view.set_defaults(handler=_handle_view)
     
-def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
+def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'tbl' command group and its actions."""
-    p_tbl = subparsers.add_parser("tbl", help="Whole-table operations", formatter_class=UFMT.CommandGroupHelpFormatter)
+    p_tbl = subparsers.add_parser("tbl", help="Whole-table operations",
+                                  formatter_class=UFMT.CommandGroupHelpFormatter,
+                                  parents=parents)
     tsub = p_tbl.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     # clean
@@ -1249,7 +1251,8 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     t_join.set_defaults(handler=_handle_tbl_join, standalone=True)
 
     
-    t_sort = tsub.add_parser("sort", help="Sort rows by column values (alias for 'sort rows').")
+    t_sort = tsub.add_parser("sort", help="Sort rows by column values (alias for 'sort rows').",
+                             parents=parents)
     t_sort.add_argument("--by", required=True, help="Comma-separated columns to sort by.")
     t_sort.add_argument("--descending", action="store_true")
     t_sort.add_argument("--natural", action="store_true", help="Use natural sort order.")
@@ -1306,12 +1309,15 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction) -> None:
     t_transpose = tsub.add_parser("transpose", help="Transpose the table.")
     t_transpose.set_defaults(handler=_handle_tbl_transpose)
     
-def _attach_sort_group(subparsers: argparse._SubParsersAction) -> None:
+def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'sort' command group and its actions."""
-    p_sort = subparsers.add_parser("sort", help="Sort rows or columns", formatter_class=UFMT.CommandGroupHelpFormatter)
+    p_sort = subparsers.add_parser("sort", help="Sort rows or columns",
+                                   formatter_class=UFMT.CommandGroupHelpFormatter,
+                                   parents=parents)
+
     sosub = p_sort.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
-    so_rows = sosub.add_parser("rows", help="Sort rows by column values")
+    so_rows = sosub.add_parser("rows", help="Sort rows by column values", parents=parents)
     so_rows.add_argument("--by", required=True, help="Comma-separated columns to sort by.")
     so_rows.add_argument("--descending", action="store_true")
     so_rows.add_argument("--natural", action="store_true", help="Use natural sort order.")
@@ -1326,9 +1332,9 @@ def _attach_sort_group(subparsers: argparse._SubParsersAction) -> None:
     so_cols.add_argument("--natural", action="store_true", help="Use natural sort order.")
     so_cols.set_defaults(handler=_handle_sort_header)
     
-def _attach_row_group(subparsers: argparse._SubParsersAction) -> None:
+def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'row' command group and its actions."""
-    p_row = subparsers.add_parser("row", help="Row operations", formatter_class=UFMT.CommandGroupHelpFormatter)
+    p_row = subparsers.add_parser("row", help="Row operations", formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents)
     rsub = p_row.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     r_subset = rsub.add_parser("subset", help="Select a subset of rows using a query expression")
@@ -1380,9 +1386,9 @@ def _attach_row_group(subparsers: argparse._SubParsersAction) -> None:
     r_add.add_argument("--at", type=int, help="1-based position to insert the row (default: append).")
     r_add.set_defaults(handler=_handle_row_add)
     
-def _attach_col_group(subparsers: argparse._SubParsersAction) -> None:
+def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'col' command group and its actions."""
-    p_col = subparsers.add_parser("col", help="Column operations", formatter_class=UFMT.CommandGroupHelpFormatter)
+    p_col = subparsers.add_parser("col", help="Column operations", formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents)
     csub = p_col.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     c_subset = csub.add_parser("subset", help="Select a subset of columns by name/glob/position/regex")
@@ -1465,9 +1471,9 @@ def _attach_col_group(subparsers: argparse._SubParsersAction) -> None:
     c_join.set_defaults(handler=_handle_col_join)
 
 #----header group
-def _attach_header_group(subparsers: argparse._SubParsersAction) -> None:
+def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'header' command group and its actions."""
-    p_header = subparsers.add_parser("header", help="Header operations", formatter_class=UFMT.CommandGroupHelpFormatter)
+    p_header = subparsers.add_parser("header", help="Header operations", formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents)
     hsub = p_header.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     h_view = hsub.add_parser("view", help="View header column names")
@@ -1510,14 +1516,23 @@ def _attach_header_group(subparsers: argparse._SubParsersAction) -> None:
     h_add_suffix.set_defaults(handler=_handle_header_add_suffix)
 
     
-def _attach_stable_groups(subparsers: argparse._SubParsersAction) -> None:
+def _attach_stable_groups(subparsers: argparse._SubParsersAction, *, parents=None) -> None:    
     """Attaches all stable command groups to the main parser."""
-    _attach_header_group(subparsers)
-    _attach_col_group(subparsers)
-    _attach_row_group(subparsers)
-    _attach_sort_group(subparsers)
-    _attach_tbl_group(subparsers)
-    _attach_view_group(subparsers)
+    #_attach_header_group(subparsers)
+    _attach_header_group(subparsers, parents=parents)    
+    #_attach_col_group(subparsers)
+    _attach_col_group(subparsers, parents=parents)
+
+    #_attach_row_group(subparsers)
+    _attach_row_group(subparsers, parents=parents)
+
+    #_attach_sort_group(subparsers)
+    _attach_sort_group(subparsers, parents=parents)
+    
+    #_attach_tbl_group(subparsers)
+    _attach_tbl_group(subparsers, parents=parents)    
+    #_attach_view_group(subparsers)
+    _attach_view_group(subparsers, parents=parents)
 
 def safe_register(mod, subparsers, utils_api, logger):
     try:
@@ -1550,14 +1565,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Global options
     UP.add_common_io_args(ap)
+    common_parent = argparse.ArgumentParser(add_help=False)
+    UP.add_common_io_args(common_parent)
+
     g = ap.add_argument_group("Global Options")
     g.add_argument("-h", "--help", action="help", help=argparse.SUPPRESS)
     g.add_argument("--plugins", action=UFMT.PluginsAction, help="List loaded plugins and exit.")
     g.add_argument("--version", action="version", version="tblkit 2.0.0")
 
     subs = ap.add_subparsers(dest="group", metavar="group", required=True)
-    _attach_stable_groups(subs)
-    
+    #_attach_stable_groups(subs)
+    _attach_stable_groups(subs, parents=[common_parent])
     # Load plugins so their commands are available
     utils_api = UtilsAPI()
     logger = ULOG.get_logger("tblkit.core")
