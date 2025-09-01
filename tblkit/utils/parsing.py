@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+from tblkit.utils import formatters as UFMT
 
 def build_epilog(title: str, items: list[str]) -> str:
     if not items:
@@ -32,7 +33,8 @@ def add_common_io_args(ap: argparse.ArgumentParser) -> None:
     g.add_argument("--no-header", action="store_true",
                    help="Treat input as headerless.")
     g.add_argument("--pretty", action="store_true",
-                   help="Preview result to stderr instead of writing.")
+               help="Pretty-print result to stdout (use head/less -S).")
+    
     g.add_argument("--quiet", action="store_true",
                    help="Suppress non-critical logs.")
     g.add_argument("--debug", action="store_true",
