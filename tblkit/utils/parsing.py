@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 from tblkit.utils import formatters as UFMT
 
+
 def build_epilog(title: str, items: list[str]) -> str:
     if not items:
         return ""
@@ -11,6 +12,7 @@ def build_epilog(title: str, items: list[str]) -> str:
         pad = " " * (width - len(x))
         lines.append(f"  {x}{pad}  ")
     return "\n".join(lines)
+
 
 def add_common_io_args(ap: argparse.ArgumentParser) -> None:
     g = ap.add_argument_group("I/O")

@@ -4,7 +4,7 @@ from typing import Dict, List
 
 _TERM_WIDTH = shutil.get_terminal_size((100, 20)).columns
 
-# Insert near top-level helpers (once):
+
 def _is_subparsers_action(action: argparse.Action) -> bool:
     """
     Return True for the 'subparsers' action using only public APIs:
