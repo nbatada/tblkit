@@ -108,6 +108,7 @@ tblkit
 │   └── transpose               (Transpose the table.)
 └── view                        (Pretty-print a table (ASCII, non-folding).)
 
+```
 </details>
 <!-- END: TBLKIT COMMANDS -->
 
