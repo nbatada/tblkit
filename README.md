@@ -24,26 +24,20 @@ Requires Python 3.9+.
 Assume a CSV like:
 
 ```
-ticker,name,sector,market_cap,last_close,dma200,pct_from_dma200
+Ticker,Company name,Market sector,Market_cap,last close,dma200,Pct from dma200
 CNC,Centene Corporation,Health Care,"$14,647,224,469",29.04,52.96,-45.17%
 IT,Gartner,Information Technology,"$19,024,075,787",251.19,434.06,-42.13%
 TTD,Trade Desk (The),Communication Services,"$26,725,624,743",54.66,84.68,-35.45%
 ```
 
 ```bash
-# 1) View (non-folding ASCII; pipe to less -S to scroll horizontally)
-cat sp500_below_200dma.csv   | tblkit --sep csv view   | less -S
-
-# 2) Clean headers + values (preserves decimals, percents, and dates; removes thousands)
+# 1) Clean headers + values (preserves decimals, percents, and dates; removes thousands)
 cat sp500_below_200dma.csv   | tblkit --sep csv tbl clean   | head
 
-# 3) Sort numerically on a currency/commas column (data stays text)
+# 2) Sort numerically on a currency/commas column (data stays text)
 cat sp500_below_200dma.csv   | tblkit --sep csv tbl sort --by market_cap --numeric   | head -n 3
 
-# 4) Sort by date
-cat trades.csv   | tblkit --sep csv tbl sort --by trade_date --date
-
-# 5) Fuzzy left join (normalize suffixes like -01; match ≥0.92)
+# 3) Fuzzy left join (normalize suffixes like -01; match ≥0.92)
 tblkit tbl join   --left A.csv --right B.csv --sep csv   --keys id --how left --fuzzy   --key-norm strip_suffix:-\d+$,rm_leading_zeros,upper   --threshold 0.92 --report fuzzy_report.csv
 ```
 
@@ -134,8 +128,3 @@ tblkit tbl --help      # whole-table operations (clean, join, sort, …)
 [MIT](LICENSE)
 
 ---
-
-### Appendix: install notes
-
-- Prefer `pipx` for isolated CLI installs.
-- Windows users: run in a terminal that supports UTF-8; set `PYTHONUTF8=1` if needed.
