@@ -11,10 +11,7 @@ tblkit fills the gap between Unix text tools and “fire up pandas”: ergonomic
 ## Install
 
 ```bash
-# recommended
-pip install tblkit
 
-# or, from source
 pip install git+https://github.com/nbatada/tblkit
 ```
 
