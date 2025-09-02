@@ -219,6 +219,15 @@ class CommandsAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None) -> None:
         # Detect color support like the old 'view tree'
         use_color = sys.stdout.isatty() and (os.getenv("NO_COLOR") is None)
+        # Windows consoles need VT processing; try to enable but never hard-depend.
+        if use_color and os.name == "nt":
+            try:
+                import colorama  # type: ignore
+                colorama.just_fix_windows_console()
+            except Exception:
+                pass
+
+
         cyan = "\033[96m" if use_color else ""
         orange = "\033[33m" if use_color else ""
         reset = "\033[0m" if use_color else ""

@@ -441,7 +441,7 @@ def _handle_sort_header(df: pd.DataFrame | None, args: argparse.Namespace, *, is
 
 
 #-- Table Handlers --
-# REPLACE lines 466–477 in core.py with this function
+
 def _handle_tbl_aggregate(df, args, column_names=None, **kwargs):
     """
     Group-aggregate.
@@ -459,22 +459,19 @@ def _handle_tbl_aggregate(df, args, column_names=None, **kwargs):
     by_cols = resolve_columns_advanced(df, [by_spec])
 
     ops_text = getattr(args, "ops", None)
+    cols_text = getattr(args, "columns", None)
     op = getattr(args, "op", None)
     funcs_text = getattr(args, "funcs", None)
-    cols_text = getattr(args, "columns", None) or column_names
 
     if ops_text:
         agg_spec = {}
-        for chunk in str(ops_text).split(","):
-            if not chunk.strip():
+        for pair in str(ops_text).split(","):
+            if not pair.strip():
                 continue
-            if ":" not in chunk:
-                raise ValueError(f"Bad --ops entry '{chunk}'. Use col:func.")
-            c, fn = chunk.split(":", 1)
-            c = c.strip(); fn = fn.strip()
-            if c not in df.columns:
-                raise KeyError(f"Unknown column in --ops: {c}")
-            agg_spec[c] = fn
+            name, _, func = pair.partition(":")
+            if not name or not func:
+                raise ValueError(f"Bad --ops item: {pair!r}")
+            agg_spec[name.strip()] = func.strip()
     else:
         if not cols_text:
             raise ValueError("Aggregation needs --columns when --ops is not used.")
@@ -489,10 +486,11 @@ def _handle_tbl_aggregate(df, args, column_names=None, **kwargs):
         else:
             raise ValueError("Use --ops OR --op+--columns OR --funcs+--columns.")
 
-    out = df.groupby(by=by_cols, dropna=False).agg(agg_spec).reset_index()
+    out = df.groupby(by=by_cols, dropna=False, sort=False).agg(agg_spec).reset_index()
     return out
 
-# REPLACE lines 479–483 in core.py with this function
+
+
 def _handle_tbl_melt(df, args, column_names=None, **kwargs):
     """
     Melt wide → long.
@@ -635,8 +633,9 @@ def _handle_tbl_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
 
 def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """Groups rows and squashes column values into delimited strings."""
-    if df is None: raise ValueError("tbl squash expects piped data")
-    
+    if df is None:
+        raise ValueError("tbl squash expects piped data")
+
     group_cols = UCOL.parse_multi_cols(args.group_by, df.columns)
     agg_cols = [c for c in df.columns if c not in group_cols]
 
@@ -647,11 +646,10 @@ def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
         agg_func = lambda x: args.delimiter.join(x.dropna().astype(str))
     else:
         agg_func = lambda x: args.delimiter.join(x.dropna().unique().astype(str))
-        
+
     agg_dict = {col: agg_func for col in agg_cols}
-    
-    squashed_df = df.groupby(group_cols, as_index=False).agg(agg_dict)
-    
+    squashed_df = df.groupby(group_cols, as_index=False, sort=False).agg(agg_dict)
+
     # Preserve original column order
     return squashed_df[group_cols + agg_cols]
 
