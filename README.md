@@ -2,12 +2,9 @@
 
 Small, fast CLI for everyday table wrangling. Works with CSV/TSV (and friends), streams nicely, and plays well with Unix pipes.
 
-- Pretty, non-folding table view for terminals (`less -S` friendly)
-- Clean headers/values (without wrecking numbers or dates)
-- Sort by text, **numeric-like strings**, or **dates**
-- Joins (incl. **fuzzy** left-join with simple normalizers)
-- Column select/split/strip/rename
-- Quiet on broken pipes (no stack traces on `| head`)
+
+tblkit fills the gap between Unix text tools and “fire up pandas”: ergonomic defaults, safe cleaning, and the few “you always need them” behaviors (non-folding view, numeric/date sorting, fuzzy join).
+
 
 ---
 
@@ -15,10 +12,7 @@ Small, fast CLI for everyday table wrangling. Works with CSV/TSV (and friends), 
 
 ```bash
 # recommended
-pipx install tblkit
-
-# or
-pip install -U tblkit
+pip install tblkit
 
 # or, from source
 pip install git+https://github.com/nbatada/tblkit
@@ -113,26 +107,6 @@ tblkit
 <!-- END: TBLKIT COMMANDS -->
 
 
-**Tips**
-
-- Global flags like `--sep csv` work **before or after** the command (e.g., `tblkit tbl sort --sep csv ...`).
-- Prefer `--output-sep tsv` over `tr ',' '\t'` (CSV quoting is respected on output).
-
----
-
-## Why tblkit (vs awk/sed/cut/join, csvkit, jq, pandas)?
-
-| Task | awk/sed/cut/join | csvkit | jq | pandas | **tblkit** |
-|---|---|---|---|---|---|
-| Stream-friendly (pipes) | ✅ | ✅ | ⚠️ (JSON) | ❌ | ✅ |
-| Pretty table view (non-folding) | ❌ | ❌ | ❌ | ⚠️ | ✅ |
-| Clean headers/values safely | ⚠️ | ⚠️ | ❌ | ✅ | ✅ (text only; keeps numbers/dates) |
-| Numeric sort on text numbers (e.g., `$1,234`) | ⚠️ | ⚠️ | ❌ | ✅ | ✅ (`--numeric`) |
-| Date sort | ❌ | ⚠️ | ❌ | ✅ | ✅ (`--date`) |
-| Fuzzy join | ❌ | ❌ | ❌ | ⚠️ | ✅ (simple, built-in) |
-| Low ceremony | ⚠️ | ✅ | ❌ | ❌ | ✅ |
-
-tblkit fills the gap between Unix text tools and “fire up pandas”: ergonomic defaults, safe cleaning, and the few “you always need them” behaviors (non-folding view, numeric/date sorting, fuzzy join).
 
 ---
 
@@ -143,33 +117,6 @@ tblkit --commands      # show the command tree
 tblkit --help          # global help
 tblkit view --help     # pretty printer options
 tblkit tbl --help      # whole-table operations (clean, join, sort, …)
-```
-
-**Highlights**
-
-- `view` — pretty ASCII table (non-folding). `--max-col-width 40` (default), `--show-full`, `--max-cols N`.
-- `tbl clean` — header cleaning + (by default) **string values only**:
-  - Keeps decimals, `%`, and dates; removes thousands separators on numeric-like strings.
-  - Header defaults: lowercase, squeeze spaces, ASCII-only, strip punctuation.
-  - Values: keep punctuation by default; enable removal with `--strip-punct-values`.
-  - Exclude columns from value cleaning: `--exclude col1,col2`.
-- `tbl sort` / `sort rows` — `--by A,B`, `--descending`, `--natural`, **`--numeric`**, **`--date`** (`--date-format` optional).
-- `tbl join` — `--left/--right`, `--keys`, `--how` (inner/left/right/outer). Fuzzy: `--fuzzy`, `--key-norm`, `--threshold`, `--report`, `--require-coverage`.
-
----
-
-## Configuration
-
-- **Colors**: honors `NO_COLOR` env var. Help/errors display color when attached to a TTY; set `NO_COLOR=1` to force plain text.
-- **Broken pipes**: `view`/write operations suppress `BrokenPipeError` so `| head` or exiting `less` doesn’t print tracebacks.
-
----
-
-## Sample data for testing
-
-```bash
-curl -L https://raw.githubusercontent.com/nbatada/tblkit/main/examples/sp500_below_200dma.sample.csv \
-  | tblkit --sep csv view | head -n 10
 ```
 
 ---

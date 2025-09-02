@@ -18,9 +18,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://example.com"
-Repository = "https://example.com/repo"
-Issues = "https://example.com/repo/issues"
+Homepage = "https://github.com/nbatada/tblkit/"
+Repository = "https://github.com/nbatada/tblkit/tree/main"
+Issues = "https://github.com/nbatada/tblkit/issues"
 
 [project.scripts]
 tblkit = "tblkit.core:main"
