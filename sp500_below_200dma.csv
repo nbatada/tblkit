@@ -1,0 +1,165 @@
+ticker,name,sector,market_cap,last_close,dma200,pct_from_dma200
+CNC,Centene Corporation,Health Care,"$14,647,224,469",29.04,52.96,-45.17%
+IT,Gartner,Information Technology,"$19,024,075,787",251.19,434.06,-42.13%
+TTD,Trade Desk (The),Communication Services,"$26,725,624,743",54.66,84.68,-35.45%
+MOH,Molina Healthcare,Health Care,"$9,800,986,099",180.83,280.07,-35.43%
+LULU,Lululemon Athletica,Consumer Discretionary,"$24,233,871,834",202.20,303.37,-33.35%
+ENPH,Enphase Energy,Information Technology,"$4,929,312,800",37.70,53.36,-29.35%
+FI,Fiserv,Financials,"$75,113,680,075",138.18,190.68,-27.53%
+UNH,UnitedHealth Group,Health Care,"$280,641,193,000",309.87,427.52,-27.52%
+CHTR,Charter Communications,Communication Services,"$36,275,838,071",265.58,361.13,-26.46%
+MRNA,Moderna,Health Care,"$9,372,937,259",24.09,32.33,-25.49%
+ALGN,Align Technology,Health Care,"$10,290,169,831",141.96,189.33,-25.02%
+TPL,Texas Pacific Land Corporation,Energy,"$21,458,184,355",933.48,"1,219.09",-23.43%
+DOW,Dow Inc.,Materials,"$17,458,827,913",24.63,32.08,-23.23%
+CMG,Chipotle Mexican Grill,Consumer Discretionary,"$56,504,682,382",42.14,53.15,-20.71%
+FTNT,Fortinet,Information Technology,"$60,757,267,031",78.77,98.51,-20.03%
+COO,Cooper Companies (The),Health Care,"$13,399,726,364",67.40,83.42,-19.20%
+GDDY,GoDaddy,Information Technology,"$20,533,369,666",148.31,181.87,-18.45%
+ACN,Accenture,Information Technology,"$161,923,093,091",259.97,318.50,-18.38%
+CAG,Conagra Brands,Consumer Staples,"$9,337,735,190",19.13,23.29,-17.85%
+FICO,Fair Isaac,Information Technology,"$36,524,990,420","1,521.64","1,848.87",-17.70%
+BAX,Baxter International,Health Care,"$12,681,302,567",24.69,29.98,-17.65%
+UPS,United Parcel Service,Industrials,"$74,111,521,470",87.44,105.51,-17.12%
+EMN,Eastman Chemical Company,Materials,"$8,077,282,459",70.34,84.27,-16.53%
+CLX,Clorox,Consumer Staples,"$14,456,923,427",118.20,140.53,-15.89%
+ELV,Elevance Health,Health Care,"$71,752,968,326",318.65,377.81,-15.66%
+FDS,FactSet,Financials,"$14,114,034,853",373.32,442.35,-15.61%
+KMX,CarMax,Consumer Discretionary,"$9,206,916,971",61.35,72.49,-15.37%
+MKTX,MarketAxess,Financials,"$6,868,960,855",183.84,216.40,-15.04%
+WAT,Waters Corporation,Health Care,"$17,964,372,653",301.80,353.74,-14.68%
+DECK,Deckers Brands,Consumer Discretionary,"$17,746,273,640",119.63,140.00,-14.55%
+OKE,Oneok,Energy,"$48,100,763,994",76.38,89.12,-14.30%
+HRL,Hormel Foods,Consumer Staples,"$13,991,949,821",25.44,29.58,-13.99%
+VRTX,Vertex Pharmaceuticals,Health Care,"$100,254,009,131",391.02,454.53,-13.97%
+IFF,International Flavors & Fragrances,Materials,"$17,301,936,458",67.51,78.28,-13.76%
+ADBE,Adobe Inc.,Information Technology,"$151,312,145,178",356.70,412.42,-13.51%
+TGT,Target Corporation,Consumer Staples,"$43,612,929,605",95.98,110.78,-13.36%
+IEX,IDEX Corporation,Industrials,"$12,384,760,192",164.50,189.68,-13.27%
+RVTY,Revvity,Health Care,"$10,459,338,101",90.11,103.80,-13.19%
+LKQ,LKQ Corporation,Consumer Discretionary,"$8,392,897,124",32.62,37.51,-13.05%
+ODFL,Old Dominion,Industrials,"$31,729,063,217",150.97,173.53,-13.00%
+STZ,Constellation Brands,Consumer Staples,"$28,553,421,875",161.94,185.63,-12.76%
+CPB,Campbell's Company (The),Consumer Staples,"$9,519,290,480",31.93,36.51,-12.55%
+FTV,Fortive,Industrials,"$16,192,761,167",47.86,54.66,-12.44%
+CZR,Caesars Entertainment,Consumer Discretionary,"$5,567,945,935",26.77,30.54,-12.35%
+GIS,General Mills,Consumer Staples,"$26,376,062,148",49.33,56.25,-12.30%
+CRM,Salesforce,Information Technology,"$244,975,000,000",256.25,290.21,-11.70%
+LYB,LyondellBasell,Materials,"$18,124,864,309",56.35,63.68,-11.51%
+KDP,Keurig Dr Pepper,Consumer Staples,"$39,517,017,946",29.09,32.80,-11.32%
+CPRT,Copart,Industrials,"$47,196,147,488",48.81,54.87,-11.05%
+ISRG,Intuitive Surgical,Health Care,"$169,667,155,938",473.30,528.69,-10.48%
+BRO,Brown & Brown,Financials,"$31,978,278,619",96.95,108.27,-10.46%
+BF-B,Brown–Forman,Consumer Staples,"$14,223,565,874",29.94,33.43,-10.43%
+EPAM,EPAM Systems,Information Technology,"$9,822,705,318",176.36,196.40,-10.21%
+FIS,Fidelity National Information Services,Financials,"$36,467,277,273",69.81,77.34,-9.74%
+OTIS,Otis Worldwide,Industrials,"$34,479,785,224",86.38,95.35,-9.41%
+TECH,Bio-Techne,Health Care,"$8,497,696,666",54.63,60.20,-9.25%
+BMY,Bristol Myers Squibb,Health Care,"$96,032,059,821",47.18,51.98,-9.24%
+AMCR,Amcor,Materials,"$19,890,941,235",8.63,9.44,-8.57%
+TAP,Molson Coors Beverage Company,Consumer Staples,"$9,992,627,298",50.49,55.19,-8.51%
+PCG,PG&E Corporation,Utilities,"$33,582,992,657",15.28,16.66,-8.26%
+EQIX,Equinix,Real Estate,"$76,939,698,399",786.19,856.08,-8.16%
+CHD,Church & Dwight,Consumer Staples,"$22,694,614,587",93.16,101.39,-8.12%
+ERIE,Erie Indemnity,Financials,"$18,530,495,017",354.38,384.96,-7.94%
+REGN,Regeneron Pharmaceuticals,Health Care,"$61,546,652,194",580.70,629.58,-7.76%
+VRSK,Verisk Analytics,Industrials,"$37,460,387,263",268.12,290.65,-7.75%
+IR,Ingersoll Rand,Industrials,"$31,569,691,276",79.43,85.83,-7.45%
+APO,Apollo Global Management,Financials,"$77,927,236,856",136.23,147.01,-7.33%
+DVA,DaVita,Health Care,"$9,849,839,607",137.76,148.58,-7.28%
+WDAY,"Workday, Inc.",Information Technology,"$61,628,941,956",230.82,248.17,-6.99%
+PYPL,PayPal,Financials,"$67,057,983,029",70.19,75.32,-6.81%
+CTSH,Cognizant,Information Technology,"$35,286,611,000",72.25,77.38,-6.63%
+LLY,Lilly (Eli),Health Care,"$656,726,501,962",732.58,784.51,-6.62%
+MMC,Marsh McLennan,Financials,"$101,181,134,240",205.81,220.05,-6.47%
+TRGP,Targa Resources,Energy,"$36,100,608,738",167.76,179.01,-6.28%
+JKHY,Jack Henry & Associates,Financials,"$11,896,984,364",163.26,174.13,-6.25%
+LII,Lennox International,Industrials,"$19,594,441,483",557.86,594.97,-6.24%
+JBHT,J.B. Hunt,Industrials,"$14,034,930,459",144.99,154.62,-6.23%
+MKC,McCormick & Company,Consumer Staples,"$18,750,227,972",70.37,75.03,-6.21%
+SBAC,SBA Communications,Real Estate,"$21,996,588,805",204.85,217.92,-6.00%
+AKAM,Akamai Technologies,Information Technology,"$11,346,133,786",79.13,84.16,-5.97%
+CL,Colgate-Palmolive,Consumer Staples,"$67,947,138,551",84.07,89.35,-5.91%
+AVB,AvalonBay Communities,Real Estate,"$27,885,712,986",195.85,207.76,-5.73%
+DXCM,Dexcom,Health Care,"$29,544,956,867",75.34,79.91,-5.72%
+WY,Weyerhaeuser,Real Estate,"$18,665,489,555",25.87,27.43,-5.68%
+KVUE,Kenvue,Consumer Staples,"$39,743,936,949",20.71,21.94,-5.59%
+SBUX,Starbucks,Consumer Discretionary,"$100,245,578,597",88.19,93.41,-5.59%
+EXE,Expand Energy,Energy,"$23,047,769,589",96.78,102.48,-5.56%
+NOW,ServiceNow,Information Technology,"$190,390,393,639",917.46,970.89,-5.50%
+BDX,Becton Dickinson,Health Care,"$55,313,278,779",192.98,204.15,-5.47%
+CDW,CDW Corporation,Information Technology,"$21,593,609,640",164.76,174.25,-5.44%
+IRM,Iron Mountain,Real Estate,"$27,269,481,381",92.33,97.52,-5.33%
+ROP,Roper Technologies,Information Technology,"$56,638,324,077",526.31,555.33,-5.23%
+GPN,Global Payments,Financials,"$21,548,354,377",88.82,93.64,-5.15%
+CARR,Carrier Global,Industrials,"$55,486,695,438",65.20,68.73,-5.14%
+HAL,Halliburton,Energy,"$19,379,642,706",22.73,23.95,-5.11%
+FDX,FedEx,Industrials,"$54,520,506,088",231.07,243.50,-5.10%
+AVY,Avery Dennison,Materials,"$13,385,541,164",171.65,180.85,-5.09%
+CPAY,Corpay,Financials,"$22,996,992,596",325.67,342.82,-5.00%
+PGR,Progressive Corporation,Financials,"$144,875,982,568",247.06,259.91,-4.94%
+GEHC,GE HealthCare,Health Care,"$33,662,316,613",73.73,77.55,-4.93%
+ON,ON Semiconductor,Information Technology,"$20,281,021,516",49.59,52.04,-4.71%
+EIX,Edison International,Utilities,"$21,600,731,933",56.13,58.81,-4.55%
+CMCSA,Comcast,Communication Services,"$125,424,375,489",33.97,35.54,-4.43%
+MAA,Mid-America Apartment Communities,Real Estate,"$17,298,627,469",145.82,152.46,-4.35%
+AMAT,Applied Materials,Information Technology,"$128,068,160,972",160.76,167.99,-4.30%
+UDR,"UDR, Inc.",Real Estate,"$14,716,557,727",39.57,41.29,-4.16%
+ESS,Essex Property Trust,Real Estate,"$18,504,142,341",270.21,281.83,-4.12%
+POOL,Pool Corporation,Consumer Discretionary,"$11,595,075,461",310.71,323.43,-3.93%
+CTRA,Coterra,Energy,"$18,651,141,225",24.44,25.43,-3.90%
+BIIB,Biogen,Health Care,"$19,385,436,537",132.22,137.30,-3.70%
+WST,West Pharmaceutical Services,Health Care,"$17,757,506,528",246.95,256.36,-3.67%
+TYL,Tyler Technologies,Information Technology,"$24,351,202,195",562.88,583.42,-3.52%
+PG,Procter & Gamble,Consumer Staples,"$367,845,776,612",157.04,162.67,-3.46%
+PAYX,Paychex,Industrials,"$50,239,630,659",139.46,144.44,-3.45%
+MDLZ,Mondelez International,Consumer Staples,"$79,500,283,274",61.44,63.62,-3.42%
+EQR,Equity Residential,Real Estate,"$25,695,688,765",66.12,68.45,-3.40%
+DOC,Healthpeak Properties,Real Estate,"$12,494,851,572",17.94,18.57,-3.38%
+ARE,Alexandria Real Estate Equities,Real Estate,"$14,074,238,997",82.44,85.30,-3.36%
+GWW,W. W. Grainger,Industrials,"$48,524,353,000","1,013.50","1,047.50",-3.25%
+AJG,Arthur J. Gallagher & Co.,Financials,"$78,360,177,000",302.75,312.65,-3.17%
+DOV,Dover Corporation,Industrials,"$24,902,320,165",178.86,184.64,-3.13%
+MRK,Merck & Co.,Health Care,"$210,113,257,769",84.12,86.80,-3.08%
+ZTS,Zoetis,Health Care,"$69,313,819,746",156.40,161.34,-3.06%
+COST,Costco,Consumer Staples,"$419,068,026,614",943.32,973.09,-3.06%
+INVH,Invitation Homes,Real Estate,"$19,181,020,881",31.29,32.26,-3.01%
+BALL,Ball Corporation,Materials,"$14,325,922,773",52.64,54.10,-2.69%
+ZBRA,Zebra Technologies,Information Technology,"$16,122,504,282",317.09,325.85,-2.69%
+EFX,Equifax,Industrials,"$30,343,421,476",246.30,253.10,-2.69%
+EXR,Extra Space Storage,Real Estate,"$31,817,470,837",143.58,147.48,-2.65%
+KMB,Kimberly-Clark,Consumer Staples,"$42,846,068,997",129.14,132.59,-2.60%
+HSIC,Henry Schein,Health Care,"$8,437,827,662",69.58,71.26,-2.36%
+CPT,Camden Property Trust,Real Estate,"$11,965,399,299",111.98,114.40,-2.12%
+LMT,Lockheed Martin,Industrials,"$106,373,655,445",455.63,465.03,-2.02%
+IP,International Paper,Materials,"$26,230,146,716",49.68,50.70,-2.01%
+OMC,Omnicom Group,Communication Services,"$15,174,323,571",78.33,79.88,-1.94%
+UNP,Union Pacific Corporation,Industrials,"$134,253,124,054",223.57,227.90,-1.90%
+DHR,Danaher Corporation,Health Care,"$147,377,821,298",205.82,209.55,-1.78%
+CI,Cigna,Health Care,"$80,310,626,057",300.87,306.28,-1.77%
+BBY,Best Buy,Consumer Discretionary,"$15,563,593,540",73.64,74.92,-1.71%
+CB,Chubb Limited,Financials,"$109,667,656,819",275.07,279.59,-1.62%
+EG,Everest Group,Financials,"$14,339,575,609",341.88,347.47,-1.61%
+SLB,Schlumberger,Energy,"$54,953,123,617",36.84,37.39,-1.48%
+K,Kellanova,Consumer Staples,"$27,639,684,864",79.50,80.64,-1.42%
+PPG,PPG Industries,Materials,"$25,104,611,758",111.23,112.46,-1.10%
+SNA,Snap-on,Industrials,"$16,965,623,707",325.24,328.16,-0.89%
+ED,Consolidated Edison,Utilities,"$35,426,847,171",98.23,99.09,-0.86%
+IBM,IBM,Information Technology,"$226,815,560,583",243.49,245.60,-0.86%
+HPQ,HP Inc.,Information Technology,"$26,676,396,392",28.54,28.76,-0.76%
+PEG,Public Service Enterprise Group,Utilities,"$41,089,257,314",82.33,82.95,-0.75%
+ACGL,Arch Capital Group,Financials,"$34,160,826,144",91.53,92.21,-0.73%
+ABNB,Airbnb,Consumer Discretionary,"$79,872,221,007",130.53,131.47,-0.72%
+FANG,Diamondback Energy,Energy,"$43,063,938,150",148.76,149.60,-0.56%
+AON,Aon plc,Financials,"$79,135,111,936",367.00,369.07,-0.56%
+PSA,Public Storage,Real Estate,"$51,686,696,271",294.59,296.15,-0.53%
+TSN,Tyson Foods,Consumer Staples,"$20,200,562,931",56.78,57.04,-0.46%
+KHC,Kraft Heinz,Consumer Staples,"$33,105,291,187",27.97,28.09,-0.43%
+MSCI,MSCI Inc.,Financials,"$43,921,769,077",567.72,569.99,-0.40%
+SWK,Stanley Black & Decker,Industrials,"$11,499,497,822",74.29,74.58,-0.39%
+WAB,Wabtec,Industrials,"$33,079,403,952",193.50,194.24,-0.38%
+AMP,Ameriprise Financial,Financials,"$48,531,962,166",514.81,516.49,-0.32%
+AMT,American Tower,Real Estate,"$95,787,689,287",203.85,204.22,-0.18%
+LW,Lamb Weston,Consumer Staples,"$8,017,093,440",57.53,57.58,-0.08%
+UHS,Universal Health Services,Health Care,"$11,555,515,263",181.58,181.64,-0.03%
+PCAR,Paccar,Industrials,"$52,499,800,503",99.98,100.00,-0.02%

@@ -7,7 +7,7 @@ import pandas as pd
 import numpy as np
 import re
 from typing import Tuple
-
+import os
 from .utils import UtilsAPI
 from .utils import io as UIO
 from .utils import parsing as UP
@@ -33,11 +33,13 @@ def _handle_header_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
 
 
 
-def _handle_header_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Creates a DataFrame with a vertical, indexed list of headers."""
+def _handle_header_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame | None:
+    """Creates a DataFrame with a vertical, indexed list of headers and pretty-prints it."""
     if df is None: raise ValueError("header view expects piped data")
     if not is_header_present:
-        return pd.DataFrame({"message": ["(no header to display)"]})
+        report_df = pd.DataFrame({"message": ["(no header to display)"]})
+        UIO.pretty_print(report_df, args=argparse.Namespace())
+        return None
 
     header = df.columns.tolist()
     if df.empty:
@@ -45,11 +47,16 @@ def _handle_header_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is
     else:
         first_row_values = [str(item) if pd.notna(item) else "" for item in df.iloc[0].tolist()]
 
-    return pd.DataFrame({
+    report_df = pd.DataFrame({
         '#': range(1, len(header) + 1),
         'header': header,
         'sample_data_row_1': first_row_values
     })
+    
+    # Always pretty-print this command's output
+    dummy_args = argparse.Namespace(max_cols=0, show_full=True, max_col_width=None)
+    UIO.pretty_print(report_df, args=dummy_args, stream='stdout')
+    return None
 
 def _handle_header_rename(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     if df is None: raise ValueError("header rename expects piped data")
@@ -631,10 +638,10 @@ def _handle_tbl_clean(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
                 df[col] = df[col].apply(_cell)
     return df
 
-def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Groups rows and squashes column values into delimited strings."""
+def _handle_tbl_collapse(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Groups rows and collapses column values into delimited strings."""
     if df is None:
-        raise ValueError("tbl squash expects piped data")
+        raise ValueError("tbl collapse expects piped data")
 
     group_cols = UCOL.parse_multi_cols(args.group_by, df.columns)
     agg_cols = [c for c in df.columns if c not in group_cols]
@@ -648,10 +655,11 @@ def _handle_tbl_squash(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
         agg_func = lambda x: args.delimiter.join(x.dropna().unique().astype(str))
 
     agg_dict = {col: agg_func for col in agg_cols}
-    squashed_df = df.groupby(group_cols, as_index=False, sort=False).agg(agg_dict)
+    collapsed_df = df.groupby(group_cols, as_index=False, sort=False).agg(agg_dict)
 
     # Preserve original column order
-    return squashed_df[group_cols + agg_cols]
+    return collapsed_df[group_cols + agg_cols]
+
 
 def _handle_tbl_pivot(df: pd.DataFrame, args: argparse.Namespace, **kwargs) -> pd.DataFrame:
     """
@@ -1185,6 +1193,7 @@ def _attach_view_group(subparsers: argparse._SubParsersAction, *, parents=None) 
     p_view = subparsers.add_parser(
         "view",
         help="Pretty-print a table (ASCII, non-folding).",
+        description="This command formats and displays a table with clear ASCII borders.",
         formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents,
     )
     # Options: max-cols retained; max-rows removed; add truncation & rich column selection
@@ -1196,10 +1205,12 @@ def _attach_view_group(subparsers: argparse._SubParsersAction, *, parents=None) 
     p_view.add_argument("-c", "--columns", help="Rich column selection (name/glob/pos/range/regex).")
     p_view.set_defaults(handler=_handle_view)
     
+    
 def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'tbl' command group and its actions."""
     p_tbl = subparsers.add_parser("tbl", help="Whole-table operations",
-                                  formatter_class=UFMT.CommandGroupHelpFormatter,
+                                  description="This group contains commands for whole-table operations.",
+                                  formatter_class=UFMT.ActionFirstHelpFormatter,
                                   parents=parents)
     tsub = p_tbl.add_subparsers(dest="action", title="Action", metavar="Action",
                                 required=True, parser_class=UFMT.ActionParser)
@@ -1237,10 +1248,8 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     t_join.add_argument("--keep-right", help="Comma-separated columns to keep from right (default: all).")
     t_join.add_argument("--suffixes", default="_x,_y", help="Suffixes for overlapping right/left columns.")
     t_join.add_argument("--fuzzy", action="store_true", help="Enable fuzzy matching fallback.")
-    t_join.add_argument("--left-key-norm", dest="key_norm", action="append",
-                        help="Normalization(s) to apply to left key before fuzzy matching.")
-    t_join.add_argument("--right-key-norm", dest="right_key_norm", action="append",
-                        help="Normalization(s) to apply to right key before fuzzy matching.")
+    t_join.add_argument("--key-norm", dest="key_norm", action="append",
+                        help="Normalization(s) to apply to key(s) before matching.")
     t_join.add_argument("--fuzzy-threshold", type=float, default=0.9,
                         help="Fuzzy match similarity threshold in [0,1] (default: 0.9).")
     t_join.add_argument("--require-coverage", action="store_true",
@@ -1278,12 +1287,12 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     t_agg.add_argument("--funcs", required=True, help="Comma-separated aggregation functions.")
     t_agg.set_defaults(handler=_handle_tbl_aggregate)
 
-    # squash
-    t_squash = tsub.add_parser("squash", help="Group rows and squash column values into delimited strings.", parents=parents)
-    t_squash.add_argument("-g", "--group-by", required=True, help="Column(s) to group by.")
-    t_squash.add_argument("-d", "--delimiter", default=",", help="Delimiter for joining values.")
-    t_squash.add_argument("--keep-all", action="store_true", help="Join all values, not just unique ones.")
-    t_squash.set_defaults(handler=_handle_tbl_squash)
+    # collapse
+    t_collapse = tsub.add_parser("collapse", help="Group rows and collapse column values into delimited strings.", parents=parents)
+    t_collapse.add_argument("-g", "--group-by", required=True, help="Column(s) to group by.")
+    t_collapse.add_argument("-d", "--delimiter", default=",", help="Delimiter for joining values.")
+    t_collapse.add_argument("--keep-all", action="store_true", help="Join all values, not just unique ones.")
+    t_collapse.set_defaults(handler=_handle_tbl_collapse)
 
     # melt
     t_melt = tsub.add_parser("melt", help="Melt table to long format.", parents=parents)
@@ -1297,10 +1306,12 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     t_transpose = tsub.add_parser("transpose", help="Transpose the table.", parents=parents)
     t_transpose.set_defaults(handler=_handle_tbl_transpose)
     
+    
 def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'sort' command group and its actions."""
     p_sort = subparsers.add_parser("sort", help="Sort rows or columns",
-                                   formatter_class=UFMT.CommandGroupHelpFormatter,
+                                   description="This group contains commands for sorting table rows or columns.",
+                                   formatter_class=UFMT.ActionFirstHelpFormatter,
                                    parents=parents)
 
     sosub = p_sort.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
@@ -1320,9 +1331,15 @@ def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) 
     so_cols.add_argument("--natural", action="store_true", help="Use natural sort order.")
     so_cols.set_defaults(handler=_handle_sort_header)
     
+    
+# Example for _attach_row_group (apply this change to all similar functions)
 def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'row' command group and its actions."""
-    p_row = subparsers.add_parser("row", help="Row operations", formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents)
+    p_row = subparsers.add_parser("row", help="Row operations",
+                                  description="This group contains commands that operate on table rows.",
+                                  formatter_class=UFMT.ActionFirstHelpFormatter, # <--- THIS IS THE CHANGE
+                                  parents=parents)
+    # ... rest of the function remains the same
     rsub = p_row.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     r_subset = rsub.add_parser("subset", help="Select a subset of rows using a query expression")
@@ -1374,9 +1391,13 @@ def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     r_add.add_argument("--at", type=int, help="1-based position to insert the row (default: append).")
     r_add.set_defaults(handler=_handle_row_add)
     
+    
+    
 def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'col' command group and its actions."""
-    p_col = subparsers.add_parser("col", help="Column operations", formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents)
+    p_col = subparsers.add_parser("col", help="Column operations",
+                                  description="This group contains commands that operate on table columns.",
+                                  formatter_class=UFMT.ActionFirstHelpFormatter, parents=parents)
     csub = p_col.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     c_subset = csub.add_parser("subset", help="Select a subset of columns by name/glob/position/regex")
@@ -1457,11 +1478,14 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_join.add_argument("-o", "--output", required=True, help="Name for the new output column.")
     c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
     c_join.set_defaults(handler=_handle_col_join)
+    
 
 #----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'header' command group and its actions."""
-    p_header = subparsers.add_parser("header", help="Header operations", formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents)
+    p_header = subparsers.add_parser("header", help="Header operations",
+                                     description="This group contains commands for manipulating table headers.",
+                                     formatter_class=UFMT.ActionFirstHelpFormatter, parents=parents)
     hsub = p_header.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
     
     h_view = hsub.add_parser("view", help="View header column names")
@@ -1562,8 +1586,10 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("-h", "--help", action="help", help=argparse.SUPPRESS)
     g.add_argument("--plugins", action=UFMT.PluginsAction, help="List loaded plugins and exit.")
     g.add_argument("--version", action="version", version="tblkit 2.0.0")
+    subs = ap.add_subparsers(dest="group", metavar="group", required=True,
+                             parser_class=UFMT.CustomArgumentParser)
 
-    subs = ap.add_subparsers(dest="group", metavar="group", required=True)
+    #subs = ap.add_subparsers(dest="group", metavar="group", required=True)
     #_attach_stable_groups(subs)
     _attach_stable_groups(subs, parents=[common_parent])
     # Load plugins so their commands are available
@@ -1624,16 +1650,37 @@ def main(argv=None) -> int:
 
     if not argv:
         parser.error("command group is required")
-        #parser.print_help()
-        return 0
-    
+        return 2 # error() already exits, but this is for clarity
+
     # Handle group-level help (e.g., 'tblkit col')
     if len(argv) == 1 and not argv[0].startswith('-') and hasattr(parser, '_subparsers'):
         sp_actions = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
         if sp_actions and argv[0] in sp_actions[0].choices:
-            sp_actions[0].choices[argv[0]].print_help()
-            return 0
+            # Custom error message for missing action
+            use_color = sys.stderr.isatty() and (os.getenv("NO_COLOR") is None)
+            red = "\033[31m" if use_color else ""
+            reset = "\033[0m" if use_color else ""
+            
+            sys.stderr.write("-------------------------------\n")
+            sys.stderr.write(f"{red}Error: Must provide an Action for the '{argv[0]}' group.{reset}\n")
+            sys.stderr.write("-------------------------------\n\n")
 
+            gp = sp_actions[0].choices[argv[0]]
+            groups = getattr(gp, "_action_groups", None)
+            if isinstance(groups, list):
+                original_groups = list(groups)
+                try:
+                    gp._action_groups = [
+                        g for g in groups
+                        if (getattr(g, "title", "") or "").strip().lower() != "i/o"
+                    ]
+                    gp.print_help(sys.stderr)
+                finally:
+                    gp._action_groups = original_groups
+            else:
+                gp.print_help(sys.stderr)
+            return 2
+        
     args0, _ = parser.parse_known_args(argv)
     ULOG.configure(quiet=getattr(args0,"quiet", False),
                    debug=getattr(args0,"debug", False),
@@ -1660,8 +1707,6 @@ def main(argv=None) -> int:
         )
 
     try:
-        # Pass the global seed to any handler that needs it
-        # (e.g., sample, shuffle). `args` now contains the global seed.
         return run_handler(df, args, is_header_present, logger)
     except (ValueError, KeyError, ImportError) as e:
         logger.error(str(e))

@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, shutil, os, sys
+import argparse, shutil, os, sys, re
 from typing import Dict, List
 
 _TERM_WIDTH = shutil.get_terminal_size((100, 20)).columns
@@ -171,14 +171,44 @@ class CustomArgumentParser(argparse.ArgumentParser):
         use_color = sys.stderr.isatty() and (os.getenv("NO_COLOR") is None)
         red = "\033[31m" if use_color else ""
         reset = "\033[0m" if use_color else ""
-        
+
         sys.stderr.write("-------------------------------\n")
-        sys.stderr.write(f"{red}Error: {message} (--help for details) {reset}\n")
+        sys.stderr.write(f"{red}Error: {message} (--help for details){reset}\n")
         sys.stderr.write("-------------------------------\n\n")
-        
-        # Print help AFTER the error (not before), then exit with code 2.
-        #self.print_help(sys.stderr)
+
+        # Find the deepest parser that matches argv (so `tblkit col` prints the group help).
+        argv = sys.argv[1:]
+        parser = self
+        while argv:
+            sub = next((a for a in getattr(parser, "_actions", [])
+                        if hasattr(a, "choices") and isinstance(getattr(a, "choices"), dict)), None)
+            if not sub or argv[0] not in getattr(sub, "choices", {}):
+                break
+            parser = sub.choices[argv[0]]
+            argv = argv[1:]
+
+        # Render help and strip the "I/O:" section only for implicit error help.
+        help_txt = parser.format_help()
+        # Remove from a line that starts with "I/O:" up to (but not including) the next ALL-CAPS section (e.g., "Action:"/"Global Options:")
+        help_txt = re.sub(r'(^|\n)I/O:\n(?:.*\n)+?(?=(?:\n[A-Z][A-Za-z /-]+:\n)|\Z)', '\n', help_txt, flags=re.M)
+
+        sys.stderr.write(help_txt)
         self.exit(2)
+        
+class ShortHelpFormatter(CommandGroupHelpFormatter):
+    """Help formatter that hides the 'I/O' argument group."""
+    def format_help(self) -> str:
+        ag = getattr(self, "_action_groups", None)
+        if isinstance(ag, list):
+            original = list(ag)
+            try:
+                filtered = [g for g in ag
+                            if (getattr(g, "title", "") or "").strip().lower() != "i/o"]
+                setattr(self, "_action_groups", filtered)
+                return super().format_help()
+            finally:
+                setattr(self, "_action_groups", original)
+        return super().format_help()
     
 class ActionParser(argparse.ArgumentParser):
     """
@@ -190,10 +220,60 @@ class ActionParser(argparse.ArgumentParser):
         kwargs.setdefault("formatter_class", CommandGroupHelpFormatter)
         super().__init__(*args, **kwargs)
 
-    # Ensure sub-subparsers (if ever used) also inherit our formatter
+
     def add_subparsers(self, **kwargs):
         kwargs.setdefault("parser_class", ActionParser)
-        return super().add_subparsers(**kwargs)
+        sp = super().add_subparsers(**kwargs)
+
+        # Re-bucket the subparsers action into a dedicated "Action" group
+        groups = getattr(self, "_action_groups", [])
+        action_group = None
+        for g in groups:
+            if getattr(g, "title", "").lower() == "action":
+                action_group = g
+                break
+        if action_group is None:
+            action_group = self.add_argument_group("Action")
+            groups = getattr(self, "_action_groups", groups)  # refresh in case list changed
+
+        # Remove sp from its current group (positional/optional) if present
+        for g in groups:
+            ga = getattr(g, "_group_actions", [])
+            if sp in ga:
+                ga.remove(sp)
+                break
+
+        # Prepend into the Action group
+        getattr(action_group, "_group_actions").insert(0, sp)
+
+        # Ensure the Action group is printed right after Usage
+        idx = groups.index(action_group)
+        if idx != 1:
+            groups.insert(1, groups.pop(idx))
+
+        return sp
+
+    def format_help(self) -> str:
+        # Put the subparser ("Action") group right after Usage.
+        groups = getattr(self, "_action_groups", None)
+        if isinstance(groups, list) and len(groups) > 1:
+            import argparse as _ap
+            target_idx = None
+            for i, g in enumerate(groups):
+                for a in getattr(g, "_group_actions", []):
+                    if isinstance(a, _ap._SubParsersAction):
+                        target_idx = i
+                        break
+                if target_idx is not None:
+                    break
+            if target_idx is None:
+                for i, g in enumerate(groups):
+                    if getattr(g, "title", "").lower() == "action":
+                        target_idx = i
+                        break
+            if target_idx is not None and target_idx != 1:
+                groups.insert(1, groups.pop(target_idx))
+        return super().format_help()
 
 
 class PluginsAction(argparse.Action):
@@ -272,54 +352,26 @@ class CommandsAction(argparse.Action):
 
         sys.stdout.write("\n".join(tree) + "\n")
         parser.exit(0)
-        
-class CommandsAction(argparse.Action):
-    """
-    argparse Action: --commands → print command tree and exit(0).
-    """
-    def __init__(self, option_strings, dest, nargs=0, **kwargs) -> None:
-        super().__init__(option_strings, dest, nargs=nargs, **kwargs)
 
-    def __call__(self, parser, namespace, values, option_string=None) -> None:
-        use_color = sys.stdout.isatty() and (os.getenv("NO_COLOR") is None)
-        cyan = "\033[96m" if use_color else ""
-        orange = "\033[33m" if use_color else ""
-        reset = "\033[0m" if use_color else ""
-
-        subparsers_actions = [a for a in parser._actions if _is_subparsers_action(a)]
-        if not subparsers_actions:
-            sys.stdout.write("tblkit\n")
-            parser.exit(0)
-
-        top = subparsers_actions[0]
-        choices = sorted(top.choices.items())
-        help_map = {a.dest: (a.help or "") for a in getattr(top, "_choices_actions", [])}
-
-        tree = ["tblkit"]
-        for gi, (gname, gparser) in enumerate(choices):
-            is_last_g = (gi == len(choices) - 1)
-            gpfx = "└── " if is_last_g else "├── "
-            gline = f"{gpfx}{cyan}{gname}{reset}"
-            gpadw = len(gpfx + gname)
-            ghelp = help_map.get(gname, "")
-            acts = [a for a in gparser._actions if _is_subparsers_action(a)]
-            if acts:
-                act = acts[0]
-                action_help = {a.dest: (a.help or "") for a in getattr(act, "_choices_actions", [])}
-                ach = sorted(act.choices.items())
-                tree.append(f"{gline}{' ' * max(0, 30 - gpadw)}  ({ghelp})")
-                for ai, (aname, _) in enumerate(ach):
-                    is_last_a = (ai == len(ach) - 1)
-                    childprefix = "    " if is_last_g else "│   "
-                    apfx = childprefix + ("└── " if is_last_a else "├── ")
-                    ahelp = action_help.get(aname, "")
-                    line = f"{apfx}{orange}{aname}{reset}"
-                    if ahelp:
-                        padw = len(apfx + aname)
-                        line += f"{' ' * max(0, 30 - padw)}  ({ahelp})"
-                    tree.append(line)
-            else:
-                tree.append(f"{gline}{' ' * max(0, 30 - gpadw)}  ({ghelp})")
-
-        sys.stdout.write("\n".join(tree) + "\n")
-        parser.exit(0)
+class ActionFirstHelpFormatter(CommandGroupHelpFormatter):
+    def format_help(self) -> str:
+        ag = getattr(self, "_action_groups", None)
+        if isinstance(ag, list) and len(ag) > 1:
+            import argparse as _ap
+            idx = None
+            for i, g in enumerate(ag):
+                for a in getattr(g, "_group_actions", []):
+                    if isinstance(a, _ap._SubParsersAction):
+                        idx = i
+                        break
+                if idx is not None:
+                    break
+            if idx is None:
+                for i, g in enumerate(ag):
+                    if getattr(g, "title", "").lower() == "action":
+                        idx = i
+                        break
+            if idx is not None and idx != 1:
+                ag.insert(1, ag.pop(idx))
+        return super().format_help()
+    

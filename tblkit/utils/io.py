@@ -104,56 +104,6 @@ def read_table(path: Optional[str],
     except Exception as e:
         raise ValueError(f"Failed to read table from {where}: {e}") from e
 
-def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None:
-    """
-    ASCII table preview with MySQL-style borders (non-folding).
-    Honors:
-      - args.max_cols      : clip to first N columns (if provided)
-      - args.max_col_width : truncate cells to width (default 40)
-      - args.show_full     : disable truncation (show full cells)
-    NOTE: No row limiting; pipe through `head`/`tail` as desired.
-    """
-    import math
-
-    max_cols = int(getattr(args, "max_cols", 0) or 0)
-    df2 = df.iloc[:, :max_cols] if max_cols > 0 else df
-
-    max_col_width = None if getattr(args, "show_full", False) else int(getattr(args, "max_col_width", 40) or 40)
-
-    headers = [str(c) for c in df2.columns]
-
-    def cell(s):
-        if s is None or (isinstance(s, float) and math.isnan(s)):
-            txt = ""
-        else:
-            txt = str(s)
-        if max_col_width and len(txt) > max_col_width:
-            return txt[: max(1, max_col_width - 1)] + "…"
-        return txt
-
-    rows = [[cell(v) for v in row] for row in df2.itertuples(index=False, name=None)]
-
-    widths = [len(h) for h in headers]
-    for r in rows:
-        for i, v in enumerate(r):
-            widths[i] = max(widths[i], len(v))
-
-    def hline(ch="-"):
-        return "+" + "+".join(ch * (w + 2) for w in widths) + "+"
-
-    def render_row(vals):
-        return "|" + "|".join(" " + v.ljust(w) + " " for v, w in zip(vals, widths)) + "|"
-
-    out = sys.stdout if stream == "stdout" else sys.stderr
-    try:
-        out.write(hline() + "\n")
-        out.write(render_row(headers) + "\n")
-        out.write(hline() + "\n")
-        for r in rows:
-            out.write(render_row(r) + "\n")
-        out.write(hline() + "\n")
-    except BrokenPipeError:
-        return
 
 def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
                 sep: str = "\t",
@@ -181,4 +131,68 @@ def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
                 out.close()
             except Exception:
                 pass
-            
+
+def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None:
+    """
+    ASCII table preview with MySQL-style borders (non-folding).
+    Honors:
+      - args.max_cols      : clip to first N columns (if provided)
+      - args.max_col_width : truncate cells to width (default 40)
+      - args.show_full     : disable truncation (show full cells)
+    NOTE: No row limiting; pipe through `head`/`tail` as desired.
+    """
+    import math
+    from wcwidth import wcswidth
+
+    max_cols = int(getattr(args, "max_cols", 0) or 0)
+    df2 = df.iloc[:, :max_cols] if max_cols > 0 else df
+
+    max_col_width = None if getattr(args, "show_full", False) else int(getattr(args, "max_col_width", 40) or 40)
+
+    headers = [str(c) for c in df2.columns]
+
+    def cell(s):
+        if s is None or (isinstance(s, float) and math.isnan(s)):
+            txt = ""
+        else:
+            txt = str(s)
+        # Truncate based on visual width
+        if max_col_width and wcswidth(txt) > max_col_width:
+            width = 0
+            end_pos = 0
+            for i, char in enumerate(txt):
+                width += wcswidth(char)
+                if width >= max_col_width:
+                    end_pos = i
+                    break
+            return txt[:end_pos] + "…"
+        return txt
+
+    rows = [[cell(v) for v in row] for row in df2.itertuples(index=False, name=None)]
+
+    widths = [wcswidth(h) for h in headers]
+    for r in rows:
+        for i, v in enumerate(r):
+            widths[i] = max(widths[i], wcswidth(v))
+
+    def hline(ch="-"):
+        return "+" + "+".join(ch * (w + 2) for w in widths) + "+"
+
+    def render_row(vals):
+        cells = []
+        for v, w in zip(vals, widths):
+            padding = " " * (w - wcswidth(v))
+            cells.append(" " + v + padding + " ")
+        return "|" + "|".join(cells) + "|"
+
+    out = sys.stdout if stream == "stdout" else sys.stderr
+    try:
+        out.write(hline() + "\n")
+        out.write(render_row(headers) + "\n")
+        out.write(hline() + "\n")
+        for r in rows:
+            out.write(render_row(r) + "\n")
+        out.write(hline() + "\n")
+    except BrokenPipeError:
+        return
+    
