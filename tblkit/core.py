@@ -8,6 +8,7 @@ import numpy as np
 import re
 from typing import Tuple
 import os
+import signal
 from .utils import UtilsAPI
 from .utils import io as UIO
 from .utils import parsing as UP
@@ -779,6 +780,103 @@ def _handle_tbl_concat(df: pd.DataFrame | None, args: argparse.Namespace, *, is_
     return pd.concat(all_dfs, ignore_index=True, sort=False)
 
 
+def _handle_tbl_path2tbl(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """
+    Build a table from filesystem paths.
+
+    Inputs:
+      --files "a,b,c" or --filelist file.txt or piped stdin (one path per line).
+    Outputs:
+      Always includes: path, name, stem, ext
+      Optionally adds ancestry via:
+        --anc 1..3      # gp1,gp2,gp3 (1=parent)
+        --anc 1,3,5     # specific levels
+        --anc-names a,b,c  # must match count in --anc
+    """
+    from pathlib import Path
+    out_rows, paths = [], []
+
+    if getattr(args, "files", None):
+        paths += [p.strip() for p in str(args.files).split(",") if p.strip()]
+    if getattr(args, "filelist", None):
+        with open(args.filelist, "r", encoding=getattr(args, "encoding", "utf-8")) as fh:
+            for line in fh:
+                s = line.strip()
+                if s and not s.startswith("#"):
+                    paths.append(s)
+    if not sys.stdin.isatty():
+        for line in sys.stdin:
+            s = line.strip()
+            if s and not s.startswith("#"):
+                paths.append(s)
+
+    # dedupe preserve order
+    seen = set(); uniq_paths = []
+    for p in paths:
+        if p not in seen:
+            uniq_paths.append(p); seen.add(p)
+
+    def parse_anc_spec(spec: str) -> list[int]:
+        spec = spec.strip()
+        if ".." in spec:
+            a, b = spec.split("..", 1)
+            a, b = int(a), int(b)
+            if a <= 0 or b <= 0:
+                raise ValueError("--anc indices must be positive (1=parent)")
+            return list(range(a, b+1)) if a <= b else list(range(a, b-1, -1))
+        out = []
+        for tok in spec.split(","):
+            tok = tok.strip()
+            if tok:
+                k = int(tok)
+                if k <= 0: raise ValueError("--anc indices must be positive (1=parent)")
+                out.append(k)
+        return out
+
+    anc_idxs: list[int] = []
+    anc_names: list[str] | None = None
+    if getattr(args, "anc", None):
+        anc_idxs = parse_anc_spec(args.anc)
+        if getattr(args, "anc_names", None):
+            anc_names = [s.strip() for s in str(args.anc_names).split(",")]
+            if len(anc_names) != len(anc_idxs):
+                raise ValueError("--anc-names count must match --anc")
+        else:
+            anc_names = [f"gp{k}" for k in anc_idxs]
+
+    missing_fill = getattr(args, "missing", None)
+    if missing_fill is None:
+        missing_fill = pd.NA
+
+    for p in uniq_paths:
+        pp = Path(p)
+        row = {
+            "path": p,
+            "name": pp.name,
+            "stem": pp.stem,
+            "ext": pp.suffix[1:] if pp.suffix.startswith(".") else pp.suffix
+        }
+        if anc_idxs:
+            parts = list(pp.parent.parts)  # e.g., ["/","u","v","x","y","z"] on POSIX
+            for idx, col in zip(anc_idxs, anc_names, strict=False):
+                row[col] = parts[-idx] if len(parts) >= idx else missing_fill
+        out_rows.append(row)
+
+    df_out = pd.DataFrame(out_rows)
+
+    # ensure unique column names (warn if changed)
+    seen = {}
+    new_cols = []
+    for c in df_out.columns:
+        if c not in seen:
+            seen[c] = 0; new_cols.append(c)
+        else:
+            seen[c] += 1
+            newc = f"{c}_{seen[c]}"
+            sys.stderr.write(f"Warning: duplicate column '{c}' renamed to '{newc}'\n")
+            new_cols.append(newc)
+    df_out.columns = new_cols
+    return df_out
 
 
 def _handle_tbl_transpose(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
@@ -1072,6 +1170,57 @@ def _handle_col_strip(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
             out[col] = s
     return out
 
+#==
+def _handle_col_affix_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Add a fixed prefix/suffix to values in selected columns."""
+    if df is None:
+        raise ValueError("col affix-add expects piped data.")
+    out = df.copy()
+    cols = UCOL.parse_multi_cols(getattr(args, "columns", None), out.columns) if getattr(args, "columns", None) else list(out.columns)
+    mode = (getattr(args, "mode", None) or "").lower()
+    if mode not in {"prefix", "suffix"}:
+        raise ValueError("--mode must be 'prefix' or 'suffix'")
+    text = getattr(args, "text", None)
+    if text is None:
+        raise ValueError("--text is required")
+    for c in cols:
+        if pd.api.types.is_string_dtype(out[c]) or pd.api.types.is_object_dtype(out[c]):
+            s = out[c].astype("string")
+            out[c] = (text + s) if mode == "prefix" else (s + text)
+    return out
+
+def _handle_col_affix_rem(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Remove a prefix/suffix by fixed/regex pattern or by character count from the chosen side."""
+    if df is None:
+        raise ValueError("col affix-rem expects piped data.")
+    out = df.copy()
+    cols = UCOL.parse_multi_cols(getattr(args, "columns", None), out.columns) if getattr(args, "columns", None) else list(out.columns)
+    mode = (getattr(args, "mode", None) or "").lower()
+    if mode not in {"prefix", "suffix"}:
+        raise ValueError("--mode must be 'prefix' or 'suffix'")
+    pat = getattr(args, "pattern", None)
+    is_regex = bool(getattr(args, "regex", False))
+    count = int(getattr(args, "count", 0) or 0)
+
+    if not pat and count <= 0:
+        raise ValueError("Provide --pattern or --count N")
+
+    for c in cols:
+        if pd.api.types.is_string_dtype(out[c]) or pd.api.types.is_object_dtype(out[c]):
+            s = out[c].astype("string")
+            # Pattern removal (applies first, then count if provided)
+            if pat:
+                if mode == "prefix":
+                    s = s.str.replace(rf"^({pat})", "", regex=True) if is_regex else s.map(lambda v: v[len(pat):] if v is not None and v.startswith(pat) else v)
+                else:
+                    s = s.str.replace(rf"({pat})$", "", regex=True) if is_regex else s.map(lambda v: v[:-len(pat)] if v is not None and len(pat)>0 and v.endswith(pat) else v)
+            # Fixed count removal
+            if count > 0:
+                s = s.str.slice(count) if mode == "prefix" else s.str.slice(stop=-count)
+            out[c] = s
+    return out
+#==
+
 def _handle_col_move(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """Reorders columns by moving a selection before or after a target."""
     if df is None: raise ValueError("col move expects piped data.")
@@ -1280,6 +1429,15 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     t_concat.add_argument("--fill-missing", action="store_true", help="Union columns, filling missing with NA.")
     t_concat.set_defaults(handler=_handle_tbl_concat)
 
+    t_path = tsub.add_parser("path2tbl", help="Build a table from paths.", parents=parents)
+    t_path.add_argument("--files", help="Comma-separated paths, or use --filelist, or pipe paths on stdin.")
+    t_path.add_argument("--filelist", help="File with one path per line (supports comments with #).")
+    t_path.add_argument("--anc", help="Ancestor spec from the right, e.g., '1..3' or '1,3,5' (1=parent).")
+    t_path.add_argument("--anc-names", help="Comma-separated column names matching --anc (e.g., 'subproj,proj,org').")
+    t_path.add_argument("--missing", help="Fill value for missing ancestry (default: NA).")
+    t_path.set_defaults(handler=_handle_tbl_path2tbl, standalone=True)
+
+    
     # aggregate
     t_agg = tsub.add_parser("aggregate", help="Group and aggregate numeric columns.", parents=parents)
     t_agg.add_argument("--group-by", required=True, help="Comma-separated group columns.")
@@ -1479,7 +1637,20 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
     c_join.set_defaults(handler=_handle_col_join)
     
+    c_aff_add = csub.add_parser("affix-add", help="Add a fixed prefix/suffix to values in selected columns.")
+    c_aff_add.add_argument("-c", "--columns", help="Column selection (default: all).")
+    c_aff_add.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to add the text.")
+    c_aff_add.add_argument("--text", required=True, help="Text to add.")
+    c_aff_add.set_defaults(handler=_handle_col_affix_add)
 
+    c_aff_rem = csub.add_parser("affix-rem", help="Remove a prefix/suffix by pattern or by character count.")
+    c_aff_rem.add_argument("-c", "--columns", help="Column selection (default: all).")
+    c_aff_rem.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to remove from.")
+    c_aff_rem.add_argument("--pattern", help="Fixed string or regex to remove (use --regex for regex).")
+    c_aff_rem.add_argument("--regex", action="store_true", help="Interpret --pattern as a regular expression.")
+    c_aff_rem.add_argument("--count", type=int, help="Remove N characters from the chosen side.")
+    c_aff_rem.set_defaults(handler=_handle_col_affix_rem)
+    
 #----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'header' command group and its actions."""
@@ -1651,6 +1822,10 @@ def main(argv=None) -> int:
     if not argv:
         parser.error("command group is required")
         return 2 # error() already exits, but this is for clarity
+    try:
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    except Exception:
+        pass
 
     # Handle group-level help (e.g., 'tblkit col')
     if len(argv) == 1 and not argv[0].startswith('-') and hasattr(parser, '_subparsers'):
@@ -1708,6 +1883,7 @@ def main(argv=None) -> int:
 
     try:
         return run_handler(df, args, is_header_present, logger)
+
     except (ValueError, KeyError, ImportError) as e:
         logger.error(str(e))
         if getattr(args, "debug", False): traceback.print_exc()
@@ -1716,6 +1892,14 @@ def main(argv=None) -> int:
         logger.error(str(e))
         if getattr(args, "debug", False): traceback.print_exc()
         return 3
+    except BrokenPipeError:
+        try:
+            try: sys.stdout.close()
+            except Exception: pass
+            try: sys.stderr.close()
+            except Exception: pass
+        finally:
+            return 0    
     except Exception as e:
         logger.error("An unexpected error occurred: %s", e)
         if getattr(args, "debug", False): traceback.print_exc()
