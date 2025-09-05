@@ -1131,8 +1131,9 @@ def _handle_col_replace(df: pd.DataFrame | None, args: argparse.Namespace, *, is
 
 def _handle_col_strip(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """
-    Trim/squeeze whitespace; optional substring strip from left/right; fixed-count strip.
+    Trim/squeeze whitespace; optional substring strip from left/right; fixed-count strip; regex strip (side-aware).
     Defaults: --squeeze is True (collapse internal whitespace to single space).
+    Sides for non-whitespace ops are chosen via --lstrip / --rstrip (both = both ends).
     """
     if df is None:
         raise ValueError("col strip expects piped data.")
@@ -1140,15 +1141,22 @@ def _handle_col_strip(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
     cols = UCOL.parse_multi_cols(args.columns, out.columns)
 
     do_squeeze = not getattr(args, "no_squeeze", False)
+    pat = getattr(args, "pattern", None)
+    use_regex = bool(getattr(args, "regex", False))
+    # Side flags for pattern/count; both True => both ends
+    do_left = bool(getattr(args, "lstrip", False))
+    do_right = bool(getattr(args, "rstrip", False))
+    both_sides = (do_left and do_right) or (not do_left and not do_right)  # default to both when unspecified
 
     for col in cols:
         if pd.api.types.is_string_dtype(out[col]) or pd.api.types.is_object_dtype(out[col]):
             s = out[col].astype("string")
+            # 1) whitespace trim (always)
             s = s.str.strip()
             if do_squeeze:
                 s = s.str.replace(r"\s+", " ", regex=True)
 
-            # Substring strip from left/right
+            # 2) fixed substring strip (literal), if provided
             if getattr(args, "lstrip_substr", None):
                 sub = str(args.lstrip_substr)
                 s = s.map(lambda v: v[len(sub):] if v is not None and v.startswith(sub) else v)
@@ -1156,16 +1164,36 @@ def _handle_col_strip(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
                 sub = str(args.rstrip_substr)
                 s = s.map(lambda v: v[:-len(sub)] if v is not None and v.endswith(sub) else v)
 
-            # Fixed-count strip with direction
+            # 3) regex or literal pattern strip (side-aware)
+            if pat:
+                if use_regex:
+                    left_re = rf"^({pat})"
+                    right_re = rf"({pat})$"
+                    if both_sides or do_left:
+                        s = s.str.replace(left_re, "", regex=True)
+                    if both_sides or do_right:
+                        s = s.str.replace(right_re, "", regex=True)
+                else:
+                    sub = str(pat)
+                    def drop_left(v):
+                        return v[len(sub):] if v is not None and v.startswith(sub) else v
+                    def drop_right(v):
+                        return v[:-len(sub)] if v is not None and v.endswith(sub) else v
+                    if both_sides or do_left:
+                        s = s.map(drop_left)
+                    if both_sides or do_right:
+                        s = s.map(drop_right)
+
+            # 4) fixed-count strip with direction
             n = int(getattr(args, "strip_num_characters", 0) or 0)
             if n > 0:
-                if getattr(args, "lstrip", False) and not getattr(args, "rstrip", False):
+                if both_sides:
+                    # symmetric trim on both ends
+                    s = s.str.slice(n).str.slice(stop=-n)
+                elif do_left:
                     s = s.str.slice(n)
-                elif getattr(args, "rstrip", False) and not getattr(args, "lstrip", False):
+                elif do_right:
                     s = s.str.slice(stop=-n)
-                else:
-                    # If both or neither specified, do nothing to avoid surprises
-                    pass
 
             out[col] = s
     return out
@@ -1600,6 +1628,8 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_strip.add_argument("--strip-num-characters", type=int, help="Fixed number of characters to strip.")
     c_strip.add_argument("--lstrip", action="store_true", help="When using --strip-num-characters, strip from left.")
     c_strip.add_argument("--rstrip", action="store_true", help="When using --strip-num-characters, strip from right.")
+    c_strip.add_argument("--pattern", help="Pattern to strip from chosen side(s); use --regex for regex; otherwise literal.")
+    c_strip.add_argument("--regex", action="store_true", help="Interpret --pattern as a regular expression.")
     c_strip.set_defaults(handler=_handle_col_strip)
     
     c_move = csub.add_parser("move", help="Reorder columns by moving a selection.")
@@ -1637,19 +1667,28 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
     c_join.set_defaults(handler=_handle_col_join)
     
-    c_aff_add = csub.add_parser("affix-add", help="Add a fixed prefix/suffix to values in selected columns.")
-    c_aff_add.add_argument("-c", "--columns", help="Column selection (default: all).")
-    c_aff_add.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to add the text.")
-    c_aff_add.add_argument("--text", required=True, help="Text to add.")
-    c_aff_add.set_defaults(handler=_handle_col_affix_add)
+    #c_aff_add = csub.add_parser("affix-add", help="Add a fixed prefix/suffix to values in selected columns.")
+    #c_aff_add = csub.add_parser("affix-add", help=argparse.SUPPRESS)
+    #c_aff_add.add_argument("-c", "--columns", help="Column selection (default: all).")
+    #c_aff_add.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to add the text.")
+    #c_aff_add.add_argument("--text", required=True, help="Text to add.")
+    #c_aff_add.set_defaults(handler=_handle_col_affix_add)
 
-    c_aff_rem = csub.add_parser("affix-rem", help="Remove a prefix/suffix by pattern or by character count.")
-    c_aff_rem.add_argument("-c", "--columns", help="Column selection (default: all).")
-    c_aff_rem.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to remove from.")
-    c_aff_rem.add_argument("--pattern", help="Fixed string or regex to remove (use --regex for regex).")
-    c_aff_rem.add_argument("--regex", action="store_true", help="Interpret --pattern as a regular expression.")
-    c_aff_rem.add_argument("--count", type=int, help="Remove N characters from the chosen side.")
-    c_aff_rem.set_defaults(handler=_handle_col_affix_rem)
+    #c_aff_rem = csub.add_parser("affix-rem", help="Remove a prefix/suffix by pattern or by character count.")
+    #c_aff_rem = csub.add_parser("affix-rem", help=argparse.SUPPRESS)
+    #c_aff_rem.add_argument("-c", "--columns", help="Column selection (default: all).")
+    #c_aff_rem.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to remove from.")
+    #c_aff_rem.add_argument("--pattern", help="Fixed string or regex to remove (use --regex for regex).")
+    #c_aff_rem.add_argument("--regex", action="store_true", help="Interpret --pattern as a regular expression.")
+    #c_aff_rem.add_argument("--count", type=int, help="Remove N characters from the chosen side.")
+    #c_aff_rem.set_defaults(handler=_handle_col_affix_rem)
+
+    c_paste = csub.add_parser("paste", help="Add fixed text as a prefix/suffix to values in selected columns.")
+    c_paste.add_argument("-c", "--columns", help="Column selection (default: all).")
+    c_paste.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to add the text.")
+    c_paste.add_argument("--text", required=True, help="Text to add.")
+    c_paste.set_defaults(handler=_handle_col_affix_add)
+    
     
 #----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
