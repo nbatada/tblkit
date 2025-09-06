@@ -1706,48 +1706,45 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
 #----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'header' command group and its actions."""
-    p_header = subparsers.add_parser("header", help="Header operations",
-                                     description="This group contains commands for manipulating table headers.",
-                                     formatter_class=UFMT.ActionFirstHelpFormatter, parents=parents)
-    hsub = p_header.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
-    
-    h_view = hsub.add_parser("view", help="View header column names")
+    p_header = subparsers.add_parser(
+        "header",
+        help="Header operations",
+        description="This group contains commands for manipulating table headers.",
+        formatter_class=UFMT.ActionFirstHelpFormatter,
+        parents=parents,
+    )
+    hsub = p_header.add_subparsers(
+        dest="action",
+        title="Action",
+        metavar="Action",
+        required=True,
+        parser_class=UFMT.ActionParser,
+    )
+
+    # view
+    h_view = hsub.add_parser("view", help="View header column names", parents=parents)
     h_view.set_defaults(handler=_handle_header_view)
-    
-    h_rename = hsub.add_parser("rename", help="Rename headers via map string or file")
+
+    # rename
+    h_rename = hsub.add_parser("rename", help="Rename headers via map string or file", parents=parents)
     map_group = h_rename.add_mutually_exclusive_group(required=True)
     map_group.add_argument("--map", help="Comma-separated map of old:new names.")
     map_group.add_argument("--from-file", help="Two-column file (old_name\\tnew_name) with renames.")
     h_rename.set_defaults(handler=_handle_header_rename)
 
-    h_add = hsub.add_parser("add", help="Add a generated header to a headerless file.")
-    h_add.add_argument("--prefix", default="col_", help="Prefix for generated column names.")
-    h_add.add_argument("--start", type=int, default=1, help="Starting number for generated column names.")
-    h_add.add_argument("--force", action="store_true", help="Add header even if one appears to exist.")
-    h_add.set_defaults(handler=_handle_header_add)
-
-    h_clean = hsub.add_parser(
-        "clean",
-        help="Normalize all column names (deprecated; use: tbl clean)",
-        parents=parents
-    )    
-    h_clean.add_argument("--case", choices=["lower", "upper"], help="Convert case.")
-    h_clean.add_argument("--spaces", help="Character to replace whitespace with.")
-    h_clean.add_argument("--ascii", action="store_true", help="Remove non-ASCII characters.")
-    h_clean.add_argument("--dedupe", help="Character to use as a separator for de-duplicating names.")
-    h_clean.set_defaults(handler=_handle_tbl_clean)
-    
-    h_prefix_num = hsub.add_parser("prefix-num", help="Prefix headers with 1_, 2_, ... (or custom fmt).")
-    h_prefix_num.add_argument("--fmt", default="{i}_", help="Format string with {i} (default: '{i}_').")
+    # prefix numbers
+    h_prefix_num = hsub.add_parser("prefix-num", help="Prefix headers with 1_, 2_, ... (or custom fmt).", parents=parents)
+    h_prefix_num.add_argument("--fmt", default="{i}_", help="Format string containing {i} (default: {i}_).")
     h_prefix_num.add_argument("--start", type=int, default=1, help="Starting integer (default: 1).")
     h_prefix_num.set_defaults(handler=_handle_header_prefix_num)
-    
-    h_add_prefix = hsub.add_parser("add-prefix", help="Add a fixed prefix to columns.")
+
+    # add fixed prefix/suffix
+    h_add_prefix = hsub.add_parser("add-prefix", help="Add a fixed prefix to columns.", parents=parents)
     h_add_prefix.add_argument("--prefix", required=True, help="Prefix text.")
     h_add_prefix.add_argument("-c", "--columns", help="Rich selection (default: all).")
     h_add_prefix.set_defaults(handler=_handle_header_add_prefix)
-    
-    h_add_suffix = hsub.add_parser("add-suffix", help="Add a fixed suffix to columns.")
+
+    h_add_suffix = hsub.add_parser("add-suffix", help="Add a fixed suffix to columns.", parents=parents)
     h_add_suffix.add_argument("--suffix", required=True, help="Suffix text.")
     h_add_suffix.add_argument("-c", "--columns", help="Rich selection (default: all).")
     h_add_suffix.set_defaults(handler=_handle_header_add_suffix)
@@ -1846,15 +1843,20 @@ def run_handler(df, args, is_header_present, logger):
     handler = getattr(args, "handler", None)
     if handler is None:
         raise ValueError("No command selected. Use --help.")
-    
+
     res = handler(df, args, is_header_present=is_header_present)
 
     if isinstance(res, pd.DataFrame):
         if getattr(args, "pretty", False):
-            # Preview to stderr instead of writing a file/STDOUT.
-            UIO.pretty_print(res, args=args, stream='stdout')
+            UIO.pretty_print(res, args=args, stream="stdout")
         else:
-            out_sep = getattr(args, "output_sep", None) or getattr(args, "sep", "\t")
+            # Prefer explicit output, then actual input sep, then CLI --sep, then TAB.
+            sep_from_df = None
+            try:
+                sep_from_df = getattr(res, "attrs", {}).get("tblkit_sep")
+            except Exception:
+                pass
+            out_sep = getattr(args, "output_sep", None) or sep_from_df or getattr(args, "sep", "\t")
             UIO.write_table(
                 res,
                 path=getattr(args, "out_file", None),

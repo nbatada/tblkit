@@ -50,103 +50,104 @@ def parse_single_col(spec: str, available: Optional[Sequence] = None):
 
 def resolve_columns_advanced(df: pd.DataFrame, specs: Iterable[str]) -> List[str]:
     """
-    Resolve column specifications to concrete column names (order-preserving, de-duplicated).
+    Resolve column specifications to concrete column labels (order-preserving, de-duplicated).
     Supports:
-      - Names:           "age,height"
-      - Excel letters:   "A:C", "AA", mixes like "A:height"
-      - Numeric indices: "0:3", "2", "-2:" (0-based; negatives count from end)
-      - Regex:           "re:^score_\\d+$"
-      - Commas in any spec string; multiple spec strings accepted via 'specs' iterable.
-    Raises KeyError/IndexError for unknown/out-of-range references.
+      - Names:            "colA,B"
+      - 1-based indices:  "1,3-5"  (inclusive range)
+      - Excel letters:    "A:C", "AA"
+      - Regex:            "re:^score_\\d+$"
+      - Globs:            "l*"
+    Raises KeyError with a clear message if any selection is out of bounds or unknown.
     """
-    from typing import Iterable, List, Optional
-    import re
-    from tblkit.utils.logging import get_logger
-    logger = get_logger(__name__)
+    import re as _re
+    from fnmatch import fnmatch as _fnmatch
 
-    names = list(map(str, df.columns))
-    name_to_idx = {n: i for i, n in enumerate(names)}
-    n = len(names)
+    labels: List = list(df.columns)
+    names: List[str] = [str(x) for x in labels]
+    n = len(labels)
+    out: List = []
 
-    def xl_to_idx(tok: str) -> Optional[int]:
-        t = tok.strip().upper()
-        if not re.fullmatch(r"[A-Z]+", t):
-            return None
-        val = 0
-        for ch in t:
-            val = val * 26 + (ord(ch) - 64)  # A=1
-        return val - 1  # to 0-based
+    def _add_by_index_1based(idx1: int):
+        if idx1 < 1 or idx1 > n:
+            raise KeyError(f"Column index {idx1} out of range (1..{n}).")
+        out.append(labels[idx1 - 1])
 
-    def to_idx(tok: str) -> Optional[int]:
-        tok = tok.strip()
-        if tok in name_to_idx:
-            return name_to_idx[tok]
-        if re.fullmatch(r"-?\d+", tok):
-            i = int(tok)
-            return n + i if i < 0 else i
-        x = xl_to_idx(tok)
-        return x
-
-    # Flatten tokens from all spec strings
     tokens: List[str] = []
-    for s in specs or []:
-        if s is None:
-            continue
-        tokens.extend([t.strip() for t in str(s).split(",") if t.strip()])
+    for s in specs:
+        if s is None: continue
+        tokens += [t for t in _re.split(r"[,\s]+", str(s).strip()) if t]
 
-    idxs: List[int] = []
     for tok in tokens:
+        # 1-based numeric range "a-b"
+        m = _re.fullmatch(r"(\d+)-(\d+)", tok)
+        if m:
+            a, b = map(int, m.groups())
+            lo, hi = (a, b) if a <= b else (b, a)
+            for k in range(lo, hi + 1):
+                _add_by_index_1based(k)
+            continue
+        # single 1-based index
+        if _re.fullmatch(r"\d+", tok):
+            _add_by_index_1based(int(tok)); continue
+        # regex
         if tok.startswith("re:"):
             pat = tok[3:]
-            try:
-                rx = re.compile(pat)
-            except re.error as e:
-                raise ValueError(f"Bad regex in column spec '{tok}': {e}") from e
-            for i, name in enumerate(names):
-                if rx.search(name):
-                    idxs.append(i)
-            continue
-
-        if ":" in tok:
+            hits = [lab for lab, nm in zip(labels, names) if _re.search(pat, nm)]
+            if not hits:
+                raise KeyError(f"No columns match regex: {pat}")
+            out.extend(hits); continue
+        # Excel letters range/name
+        if ":" in tok and not tok.startswith("re:"):
             a, b = tok.split(":", 1)
-            ai = to_idx(a) if a else 0
-            bi = to_idx(b) if b else (n - 1)
-            if ai is None and a:
-                raise KeyError(f"Unknown column bound: {a}")
-            if bi is None and b:
-                raise KeyError(f"Unknown column bound: {b}")
-            # normalize bounds
-            if not (0 <= ai < n) or not (0 <= bi < n):
-                raise IndexError(f"Column range out of bounds: {tok}")
-            lo, hi = (ai, bi) if ai <= bi else (bi, ai)
-            idxs.extend(range(lo, hi + 1))
-            continue
+            def xl_to_idx(s: str) -> int:
+                s = s.strip().upper()
+                if not _re.fullmatch(r"[A-Z]+", s):
+                    return -1
+                val = 0
+                for ch in s:
+                    val = val * 26 + (ord(ch) - ord('A') + 1)
+                return val
+            ia, ib = xl_to_idx(a), xl_to_idx(b)
+            if ia > 0 and ib > 0:
+                lo, hi = (ia, ib) if ia <= ib else (ib, ia)
+                for k in range(lo, hi + 1):
+                    _add_by_index_1based(k)
+                continue
+        # glob
+        if any(ch in tok for ch in "*?"):
+            hits = [lab for lab, nm in zip(labels, names) if _fnmatch(nm, tok)]
+            if not hits:
+                raise KeyError(f"No columns match glob: {tok}")
+            out.extend(hits); continue
+        # exact name
+        if tok in names:
+            out.append(labels[names.index(tok)]); continue
+        raise KeyError(f"Unknown column: {tok}")
 
-        i = to_idx(tok)
-        if i is None or not (0 <= i < n):
-            raise KeyError(f"Unknown column: {tok}")
-        idxs.append(i)
-
-    out: List[str] = []
-    seen = set()
-    for i in idxs:
-        c = names[i]
+    # de-duplicate, preserve order
+    seen = set(); uniq: List = []
+    for c in out:
         if c not in seen:
-            seen.add(c)
-            out.append(c)
-    return out
+            seen.add(c); uniq.append(c)
+    return uniq
 
 def parse_multi_cols(spec: str, available: Optional[Sequence] = None) -> List:
     """
     Resolve comma-separated specs while preserving ORIGINAL labels (types).
-    Supports exact names, 1-based indices, numeric ranges "2-5", name ranges "A:C",
-    glob, and regex via "re:...".
+    Supports:
+      - Names                  e.g., "colA,B"
+      - 1-based indices        e.g., "1,3"
+      - Numeric ranges         e.g., "2-5" (inclusive, 1-based)
+      - Name ranges A:C        e.g., "A:C" (Excel-style by position)
+      - Globs                  e.g., "l*"
+      - Regex                  e.g., "re:^score_\\d+$"
     """
     tokens = [s.strip() for s in str(spec).split(",") if s.strip()]
     if available is None:
         return tokens
     labels = list(available)
     names  = [str(x) for x in labels]
+    n = len(labels)
 
     out: List = []
     import re as _re
@@ -154,43 +155,63 @@ def parse_multi_cols(spec: str, available: Optional[Sequence] = None) -> List:
     import pandas as _pd
 
     for tok in tokens:
-        # 1-based numeric range
+        # 1-based numeric range a-b
         if _re.fullmatch(r"\d+-\d+", tok):
             a, b = map(int, tok.split("-"))
-            a -= 1; b -= 1
-            rng = range(min(a, b), max(a, b) + 1)
-            out.extend(labels[i] for i in rng); continue
-        # name range A:C
+            lo, hi = (a, b) if a <= b else (b, a)
+            if lo < 1 or hi > n:
+                raise KeyError(f"Column range {tok} out of bounds (1..{n}).")
+            out.extend(labels[i-1] for i in range(lo, hi+1))
+            continue
+        # Name range A:C (by position)
         if ":" in tok and not tok.startswith("re:"):
-            df = _pd.DataFrame(columns=names)
-            sel = resolve_columns_advanced(df, [tok])  # returns string names
-            s2l = {str(l): l for l in labels}
-            out.extend(s2l[s] for s in sel if s in s2l); continue
+            def xl_to_idx(s: str) -> int:
+                s = s.strip().upper()
+                if not _re.fullmatch(r"[A-Z]+", s): return -1
+                v = 0
+                for ch in s: v = v*26 + (ord(ch)-ord('A')+1)
+                return v
+            a, b = tok.split(":", 1)
+            ia, ib = xl_to_idx(a), xl_to_idx(b)
+            if ia > 0 and ib > 0:
+                lo, hi = (ia, ib) if ia <= ib else (ib, ia)
+                if lo < 1 or hi > n:
+                    raise KeyError(f"Column range {tok} out of bounds (1..{n}).")
+                out.extend(labels[i-1] for i in range(lo, hi+1))
+                continue
         # regex
         if tok.startswith("re:"):
             pat = _re.compile(tok[3:])
-            out.extend([lab for lab, s in zip(labels, names) if pat.search(s)]); continue
+            hits = [lab for lab, s in zip(labels, names) if pat.search(s)]
+            if not hits:
+                raise KeyError(f"No columns match regex: {tok[3:]}")
+            out.extend(hits); continue
         # glob
         if any(ch in tok for ch in "*?"):
-            out.extend([lab for lab, s in zip(labels, names) if _fnmatch(s, tok)]); continue
+            hits = [lab for lab, s in zip(labels, names) if _fnmatch(s, tok)]
+            if not hits:
+                raise KeyError(f"No columns match glob: {tok}")
+            out.extend(hits); continue
         # single 1-based index
         if tok.isdigit():
-            idx = int(tok) - 1
-            if 0 <= idx < len(labels):
-                out.append(labels[idx]); continue
-            raise IndexError(f"Column index out of range: {tok}")
-        # exact by string projection
+            idx = int(tok)
+            if idx < 1 or idx > n:
+                raise KeyError(f"Column index {tok} out of bounds (1..{n}).")
+            out.append(labels[idx-1]); continue
+        # exact name
         try:
             j = names.index(tok)
             out.append(labels[j]); continue
         except ValueError:
             raise KeyError(f"Unknown column: {tok}")
 
+    # de-duplicate, preserve order
     seen = set(); uniq: List = []
     for c in out:
         if c not in seen:
             seen.add(c); uniq.append(c)
     return uniq
+
 
 
 
