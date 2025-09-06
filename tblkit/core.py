@@ -1508,26 +1508,40 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     
 def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the 'sort' command group and its actions."""
-    p_sort = subparsers.add_parser("sort", help="Sort rows or columns",
-                                   description="This group contains commands for sorting table rows or columns.",
-                                   formatter_class=UFMT.ActionFirstHelpFormatter,
-                                   parents=parents)
+    p_sort = subparsers.add_parser(
+        "sort",
+        help="Sort rows or columns",
+        description="Sort table rows by values, or reorder columns by their header names.",
+        formatter_class=UFMT.ActionFirstHelpFormatter,
+        parents=parents,
+    )
+    sosub = p_sort.add_subparsers(
+        dest="action",
+        title="Action",
+        metavar="Action",
+        required=True,
+        parser_class=UFMT.ActionParser,
+    )
 
-    sosub = p_sort.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
-    
+    # rows: sort by data values
     so_rows = sosub.add_parser("rows", help="Sort rows by column values", parents=parents)
     so_rows.add_argument("--by", required=True, help="Comma-separated columns to sort by.")
     so_rows.add_argument("--descending", action="store_true")
     so_rows.add_argument("--natural", action="store_true", help="Use natural sort order.")
-    so_rows.add_argument("--date", action="store_true", help="Parse the sort keys as dates.")
+    so_rows.add_argument("--date", action="store_true", help="Parse sort keys as dates.")
     so_rows.add_argument("--date-format", help="Optional strptime format for dates.")
     so_rows.add_argument("--numeric", action="store_true",
-                     help="Coerce sort keys to numeric for ordering (data unchanged).")
-    
+                         help="Coerce sort keys to numeric for ordering (data unchanged).")
     so_rows.set_defaults(handler=_handle_sort_row)
-    
-    so_cols = sosub.add_parser("cols", help="Sort columns by their names")
-    so_cols.add_argument("--natural", action="store_true", help="Use natural sort order.")
+
+    # cols: reorder columns by header names (with aliases for clarity)
+    so_cols = sosub.add_parser(
+        "cols",
+        aliases=["colnames", "headers", "header"],
+        help="Reorder columns by their header names (alias: colnames, headers).",
+        parents=parents,
+    )
+    so_cols.add_argument("--natural", action="store_true", help="Use natural sort order (A1, A2, A10 ...).")
     so_cols.set_defaults(handler=_handle_sort_header)
     
     
@@ -1709,7 +1723,7 @@ def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None
     p_header = subparsers.add_parser(
         "header",
         help="Header operations",
-        description="This group contains commands for manipulating table headers.",
+        description="Commands for viewing and manipulating table headers.",
         formatter_class=UFMT.ActionFirstHelpFormatter,
         parents=parents,
     )
@@ -1721,24 +1735,29 @@ def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None
         parser_class=UFMT.ActionParser,
     )
 
-    # view
+    # View header
     h_view = hsub.add_parser("view", help="View header column names", parents=parents)
     h_view.set_defaults(handler=_handle_header_view)
 
-    # rename
+    # Sort header (same behavior as `sort cols`)
+    h_sort = hsub.add_parser("sort", help="Reorder columns by their header names", parents=parents)
+    h_sort.add_argument("--natural", action="store_true", help="Use natural sort order (A1, A2, A10 ...).")
+    h_sort.set_defaults(handler=_handle_sort_header)
+
+    # Rename
     h_rename = hsub.add_parser("rename", help="Rename headers via map string or file", parents=parents)
     map_group = h_rename.add_mutually_exclusive_group(required=True)
     map_group.add_argument("--map", help="Comma-separated map of old:new names.")
     map_group.add_argument("--from-file", help="Two-column file (old_name\\tnew_name) with renames.")
     h_rename.set_defaults(handler=_handle_header_rename)
 
-    # prefix numbers
+    # Add numeric prefixes
     h_prefix_num = hsub.add_parser("prefix-num", help="Prefix headers with 1_, 2_, ... (or custom fmt).", parents=parents)
-    h_prefix_num.add_argument("--fmt", default="{i}_", help="Format string containing {i} (default: {i}_).")
+    h_prefix_num.add_argument("--fmt", default="{i}_", help="Format string with {i} (default: '{i}_').")
     h_prefix_num.add_argument("--start", type=int, default=1, help="Starting integer (default: 1).")
     h_prefix_num.set_defaults(handler=_handle_header_prefix_num)
 
-    # add fixed prefix/suffix
+    # Fixed prefix/suffix
     h_add_prefix = hsub.add_parser("add-prefix", help="Add a fixed prefix to columns.", parents=parents)
     h_add_prefix.add_argument("--prefix", required=True, help="Prefix text.")
     h_add_prefix.add_argument("-c", "--columns", help="Rich selection (default: all).")
