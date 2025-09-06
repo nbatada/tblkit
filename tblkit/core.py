@@ -109,6 +109,49 @@ def _handle_header_add_suffix(df: pd.DataFrame | None, args: argparse.Namespace,
     return df.rename(columns=mapping)
 
 #-- Column Handlers --
+def _handle_col_format_num(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Formats numeric columns into human-readable strings (K, M, G)."""
+    if df is None:
+        raise ValueError("col format-num expects piped data.")
+    out = df.copy()
+    cols = UCOL.parse_multi_cols(args.columns, out.columns)
+    precision = args.precision
+
+    def human_format(num):
+        if pd.isna(num):
+            return ""
+        num = float(num)
+        
+        if abs(num) < 1_000:
+            return f"{num:.{precision}f}"
+        
+        for unit, suffix in [(1_000_000_000, 'G'), (1_000_000, 'M'), (1_000, 'K')]:
+            if abs(num) >= unit:
+                return f"{num / unit:.{precision}f}{suffix}"
+        return str(num)
+
+    for col in cols:
+        # Clean column of common currency/grouping symbols to ensure conversion
+        cleaned_series = pd.to_numeric(
+            out[col].astype(str).str.replace(r'[,\$]', '', regex=True),
+            errors='coerce'
+        )
+        out[col] = cleaned_series.apply(human_format)
+    
+    return out
+
+def _handle_col_len(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
+    """Creates a new column with the character length of a string column."""
+    if df is None:
+        raise ValueError("col len expects piped data.")
+    out = df.copy()
+    source_col = UCOL.parse_single_col(args.columns, out.columns)
+    output_col = args.output
+
+    # Use pandas' string dtype to correctly handle missing values (NA -> NA)
+    out[output_col] = out[source_col].astype('string').str.len()
+    return out
+
 def _handle_col_select(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     if df is None: raise ValueError("col select expects piped data")
     
@@ -264,6 +307,13 @@ def _handle_col_split(df: pd.DataFrame | None, args: argparse.Namespace, *, is_h
     out = df.copy()
     col = UCOL.parse_single_col(args.columns, df.columns)
 
+    # New logic to split a column's values into new rows
+    if args.to_rows:
+        split_series = out[col].astype(str).str.split(args.pattern, regex=not args.fixed)
+        out = out.assign(**{col: split_series}).explode(col)
+        return out.reset_index(drop=True)
+
+    # Original logic for splitting to new columns
     split_data = out[col].astype(str).str.split(
         args.pattern, n=args.maxsplit, expand=True, regex=not args.fixed
     )
@@ -392,6 +442,8 @@ def _handle_row_shuffle(df: pd.DataFrame | None, args: argparse.Namespace, *, is
     return df.sample(frac=1, random_state=args.seed).reset_index(drop=True)
 
 #-- Sort Handlers --
+# FILE: tblkit/core.py
+
 def _handle_sort_row(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("row sort expects piped data")
     sort_cols = UCOL.parse_multi_cols(args.by, df.columns)
@@ -408,22 +460,46 @@ def _handle_sort_row(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
                                   infer_datetime_format=False if fmt else True)
         return df.sort_values(by=sort_cols, ascending=is_ascending, key=key_dt)
 
-    # Numeric-aware path (coerce text to numbers for ordering only; data unchanged)
+    # --- START: Upgraded Numeric Sort Logic ---
     if getattr(args, "numeric", False):
         def key_num(s: pd.Series):
+            """
+            A robust key function to convert a Series of strings 
+            (including human-readable formats like '1.2M') to numbers for sorting.
+            """
             if pd.api.types.is_numeric_dtype(s):
                 return s
-            ss = s.astype("string")
-            # parentheses negatives → -value
-            ss = ss.str.replace(r"^\((.*)\)$", r"-\1", regex=True)
-            # drop leading currency symbols
-            ss = ss.str.replace(r"^[\$\€\£]\s*", "", regex=True)
-            # remove thousands separators (commas/underscores/spaces)
-            ss = ss.str.replace(r"[,_\s]", "", regex=True)
-            # strip trailing percent sign (treat -45.17% as -45.17 for ordering)
-            ss = ss.str.replace(r"%$", "", regex=True)
-            return pd.to_numeric(ss, errors="coerce")
+
+            s_str = s.astype("string").str.strip().str.lower()
+            
+            def convert_value(val):
+                if pd.isna(val) or val == "":
+                    return None
+                
+                val = val.replace('$', '').replace(',', '')
+                multiplier = 1
+                
+                if val.endswith('g'):
+                    multiplier = 1_000_000_000
+                    val = val[:-1]
+                elif val.endswith('m'):
+                    multiplier = 1_000_000
+                    val = val[:-1]
+                elif val.endswith('k'):
+                    multiplier = 1_000
+                    val = val[:-1]
+                elif val.endswith('%'):
+                    val = val[:-1]
+
+                try:
+                    return float(val) * multiplier
+                except (ValueError, TypeError):
+                    return None
+
+            return s_str.map(convert_value)
+        
         return df.sort_values(by=sort_cols, ascending=is_ascending, key=key_num)
+    # --- END: Upgraded Numeric Sort Logic ---
 
     # Natural sort (strings) if requested
     try:
@@ -433,19 +509,37 @@ def _handle_sort_row(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
     except ImportError:
         if args.natural:
             raise ImportError("Natural sort requires `natsort`. Please run `pip install natsort`.")
-        return df.sort_values(by=sort_cols, ascending=is_ascending)
-    
-    
+        return df.sort_values(by=sort_cols, ascending=is_ascending)    
+
+
 
 def _handle_sort_header(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
+    """Reorders columns by name based on specified order or precedence."""
     if df is None: raise ValueError("header sort expects piped data")
+
+    # Determine the sorting/ordering function for the "other" columns
+    sorter = sorted
     if args.natural:
         try:
             from natsort import natsorted
-            return df[natsorted(df.columns)]
+            sorter = natsorted
         except ImportError:
             raise ImportError("Natural sort requires `natsort`. Please run `pip install natsort`.")
-    return df[sorted(df.columns)]
+
+    # --order: an exact, explicit order. Columns not listed are dropped.
+    if args.order:
+        final_order = UCOL.parse_multi_cols(args.order, df.columns)
+        return df[final_order]
+
+    # --precedence: specified columns first, followed by all others sorted.
+    if args.precedence:
+        precedence_cols = UCOL.parse_multi_cols(args.precedence, df.columns)
+        other_cols = sorter([c for c in df.columns if c not in precedence_cols])
+        final_order = precedence_cols + other_cols
+        return df[final_order]
+    
+    # Default behavior: sort all columns
+    return df[sorter(df.columns)]
 
 
 
@@ -954,12 +1048,13 @@ def _handle_tbl_join(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
     """
     import re, difflib
 
-    if not args.left or not args.right:
-        raise ValueError("Both --left and --right file paths are required for tbl join.")
-
-    header_arg = 0 if not args.no_header else None
-    df_left  = UIO.read_table(args.left,  sep=args.sep, header=header_arg)
-    df_right = UIO.read_table(args.right, sep=args.sep, header=header_arg)
+    if df is None:
+        raise ValueError("The 'left' table for the join must be piped via stdin.")
+    
+    df_left = df
+    
+    header_arg = 0 if is_header_present else None
+    df_right = UIO.read_table(args.join_with, sep=args.sep, header=header_arg)
 
     keys = [k.strip() for k in args.keys.split(',')]
     for key in keys:
@@ -1438,23 +1533,17 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     t_freq.set_defaults(handler=_handle_view_frequency)
 
     # join
-    t_join = tsub.add_parser("join", help="Relational join between two tables.", parents=parents)
-    t_join.add_argument("--left", required=True, help="Path to the left table.")
-    t_join.add_argument("--right", required=True, help="Path to the right table.")
+    t_join = tsub.add_parser("join", help="Join a piped table with another table from a file.", parents=parents)
+    t_join.add_argument("join_with", help="Path to the 'right' table to join with.")
     t_join.add_argument("--keys", required=True, help="Comma-separated join key(s).")
-    t_join.add_argument("--how", choices=["left","right","inner","outer"], default="left")
-    t_join.add_argument("--keep-left", help="Comma-separated columns to keep from left (default: all).")
-    t_join.add_argument("--keep-right", help="Comma-separated columns to keep from right (default: all).")
-    t_join.add_argument("--suffixes", default="_x,_y", help="Suffixes for overlapping right/left columns.")
+    t_join.add_argument("--how", choices=["left", "right", "inner", "outer"], default="left", help="Type of join to perform.")
+    t_join.add_argument("--suffixes", default=(None, "_right"), help="Suffixes for overlapping columns.")
     t_join.add_argument("--fuzzy", action="store_true", help="Enable fuzzy matching fallback.")
-    t_join.add_argument("--key-norm", dest="key_norm", action="append",
-                        help="Normalization(s) to apply to key(s) before matching.")
-    t_join.add_argument("--fuzzy-threshold", type=float, default=0.9,
-                        help="Fuzzy match similarity threshold in [0,1] (default: 0.9).")
-    t_join.add_argument("--require-coverage", action="store_true",
-                        help="Error if any left key remains unmatched after exact+fuzzy.")
-    t_join.add_argument("--report", help="Write CSV report of matches (left_key,right_key,score,method).")
-    t_join.set_defaults(handler=_handle_tbl_join, standalone=True)
+    t_join.add_argument("--key-norm", dest="key_norm", action="append", help="Normalization(s) to apply to key(s) before matching.")
+    t_join.add_argument("--fuzzy-threshold", type=float, default=0.9, help="Fuzzy match similarity threshold (default: 0.9).")
+    t_join.add_argument("--require-coverage", action="store_true", help="Error if any left key remains unmatched.")
+    t_join.add_argument("--report", help="Write a CSV report of matches.")
+    t_join.set_defaults(handler=_handle_tbl_join) # Note: 'standalone=True' has been removed
 
     # sort (already inherited)
     t_sort = tsub.add_parser("sort", help="Sort rows by column values (alias for 'sort rows').", parents=parents)
@@ -1543,14 +1632,33 @@ def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) 
                          help="Coerce sort keys to numeric for ordering (data unchanged).")
     so_rows.set_defaults(handler=_handle_sort_row)
 
-    # cols: reorder columns by header names (with aliases for clarity)
     so_cols = sosub.add_parser(
         "cols",
         aliases=["colnames", "headers", "header"],
         help="Reorder columns by their header names (alias: colnames, headers).",
         parents=parents,
     )
-    so_cols.add_argument("--natural", action="store_true", help="Use natural sort order (A1, A2, A10 ...).")
+    
+    # --- START: New argument group ---
+    order_group = so_cols.add_mutually_exclusive_group()
+    order_group.add_argument(
+        "-a", "--alphabetical", action='store_true', 
+        help="Sort all columns alphabetically (default behavior)."
+    )
+    order_group.add_argument(
+        "-o", "--order", 
+        help="Specify an exact column order. Unlisted columns are dropped."
+    )
+    order_group.add_argument(
+        "-p", "--precedence", 
+        help="List of columns to place first; remaining columns are sorted and appended."
+    )
+    # --- END: New argument group ---
+    
+    so_cols.add_argument(
+        "--natural", action="store_true", 
+        help="Use natural sort order (e.g., A1, A2, A10) for remaining columns."
+    )
     so_cols.set_defaults(handler=_handle_sort_header)
     
     
@@ -1688,6 +1796,7 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_split.add_argument("--maxsplit", type=int, default=-1, help="Maximum number of splits (-1 for all).")
     c_split.add_argument("-n", "--names", help="Comma-separated names for new columns.")
     c_split.add_argument("--inplace", action="store_true", help="Drop the source column after split.")
+    c_split.add_argument("--to-rows", action="store_true", help="Split to new rows instead of new columns.")
     c_split.set_defaults(handler=_handle_col_split)
     
     c_add = csub.add_parser("add", help="Add a new column")
@@ -1703,21 +1812,10 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
     c_join.set_defaults(handler=_handle_col_join)
     
-    #c_aff_add = csub.add_parser("affix-add", help="Add a fixed prefix/suffix to values in selected columns.")
-    #c_aff_add = csub.add_parser("affix-add", help=argparse.SUPPRESS)
-    #c_aff_add.add_argument("-c", "--columns", help="Column selection (default: all).")
-    #c_aff_add.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to add the text.")
-    #c_aff_add.add_argument("--text", required=True, help="Text to add.")
-    #c_aff_add.set_defaults(handler=_handle_col_affix_add)
-
-    #c_aff_rem = csub.add_parser("affix-rem", help="Remove a prefix/suffix by pattern or by character count.")
-    #c_aff_rem = csub.add_parser("affix-rem", help=argparse.SUPPRESS)
-    #c_aff_rem.add_argument("-c", "--columns", help="Column selection (default: all).")
-    #c_aff_rem.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to remove from.")
-    #c_aff_rem.add_argument("--pattern", help="Fixed string or regex to remove (use --regex for regex).")
-    #c_aff_rem.add_argument("--regex", action="store_true", help="Interpret --pattern as a regular expression.")
-    #c_aff_rem.add_argument("--count", type=int, help="Remove N characters from the chosen side.")
-    #c_aff_rem.set_defaults(handler=_handle_col_affix_rem)
+    c_len = csub.add_parser("len", help="Get the character length of values in a column.", parents=parents)
+    c_len.add_argument("-c", "--columns", required=True, help="Source column to measure.")
+    c_len.add_argument("-o", "--output", required=True, help="Name for the new length column.")
+    c_len.set_defaults(handler=_handle_col_len)
 
     c_paste = csub.add_parser("paste", help="Add fixed text as a prefix/suffix to values in selected columns.")
     c_paste.add_argument("-c", "--columns", help="Column selection (default: all).")
@@ -1725,6 +1823,10 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_paste.add_argument("--text", required=True, help="Text to add.")
     c_paste.set_defaults(handler=_handle_col_affix_add)
     
+    c_format_num = csub.add_parser("format-num", help="Format numbers to human-readable strings (e.g., 1.2K, 5.0M).", parents=parents)
+    c_format_num.add_argument("-c", "--columns", required=True, help="Column(s) to format.")
+    c_format_num.add_argument("-p", "--precision", type=int, default=1, help="Number of decimal places (default: 1).")
+    c_format_num.set_defaults(handler=_handle_col_format_num)
     
 #----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
