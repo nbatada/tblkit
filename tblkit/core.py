@@ -16,7 +16,7 @@ from .utils import logging as ULOG
 from .utils import columns as UCOL
 from .utils import formatters as UFMT
 
-#region Handlers (Migrated from tblkit v1)
+__VERSION__=0.2
 
 #-- Header Handlers --
 def _handle_header_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
@@ -1109,25 +1109,38 @@ def _handle_tbl_join(df: pd.DataFrame | None, args: argparse.Namespace, *, is_he
 
 def _handle_col_replace(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """Replaces values in selected columns."""
-    if df is None: raise ValueError("col replace expects piped data.")
+    if df is None:
+        raise ValueError("col replace expects piped data.")
     out = df.copy()
     cols = UCOL.parse_multi_cols(args.columns, out.columns)
-    
-    vals_from = [v.strip() for v in args.from_val.split(',')]
-    vals_to = [v.strip() for v in args.to_val.split(',')]
-    
-    if len(vals_from) != len(vals_to):
+
+    import csv as _csv
+    def _split_csv_aware(s: str) -> list[str]:
+        return next(_csv.reader([s], skipinitialspace=True))
+
+    keys_raw = [v.strip() for v in _split_csv_aware(args.vals_from)]
+    vals_raw = [v.strip() for v in _split_csv_aware(args.vals_to)]
+    if len(keys_raw) != len(vals_raw):
         raise ValueError("--from and --to must have the same number of comma-separated values.")
 
     for col in cols:
-        if args.na_only:
-            for v_from, v_to in zip(vals_from, vals_to):
-                if v_from.lower() in ('na', 'nan', ''): # Special handling for replacing NAs
-                    out[col] = out[col].fillna(v_to)
+        s = out[col]
+        if getattr(args, "na_only", False):
+            for k, v in zip(keys_raw, vals_raw):
+                if k.lower() in ("na", "nan", ""):
+                    out[col] = s.fillna(v)
+            continue
+        if pd.api.types.is_numeric_dtype(s):
+            k_num = pd.to_numeric(keys_raw, errors="coerce")
+            v_num = pd.to_numeric(vals_raw, errors="coerce")
+            repl = {k: v for k, v in zip(k_num.tolist(), v_num.tolist()) if pd.notna(k)}
+            out[col] = s.replace(repl)
         else:
-            replace_map = dict(zip(vals_from, vals_to))
-            out[col] = out[col].replace(replace_map, regex=args.regex)
+            repl = dict(zip(keys_raw, vals_raw))
+            out[col] = s.astype("string").replace(repl, regex=getattr(args, "regex", False))
     return out
+
+
 
 def _handle_col_strip(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """
@@ -1795,7 +1808,7 @@ def build_parser() -> argparse.ArgumentParser:
     g = ap.add_argument_group("Global Options")
     g.add_argument("-h", "--help", action="help", help=argparse.SUPPRESS)
     g.add_argument("--plugins", action=UFMT.PluginsAction, help="List loaded plugins and exit.")
-    g.add_argument("--version", action="version", version="tblkit 2.0.0")
+    g.add_argument("--version", action="version", version=__VERSION__)
     subs = ap.add_subparsers(dest="group", metavar="group", required=True,
                              parser_class=UFMT.CustomArgumentParser)
 

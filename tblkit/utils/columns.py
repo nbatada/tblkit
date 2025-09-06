@@ -4,43 +4,49 @@ from fnmatch import fnmatch
 import pandas as pd
 from typing import Iterable, List, Sequence, Optional
 
-def parse_single_col(spec: str, available: Optional[Sequence[str]] = None) -> str:
+def parse_single_col(spec: str, available: Optional[Sequence] = None):
     """
-    Resolve one column spec. Supports:
-      - exact name,
-      - 1-based index ("2"),
-      - glob ("val*"),
-      - regex ("re:^tmp_").
-    If available is None, returns the trimmed spec without validation.
+    Resolve a single column spec without coercing labels to strings.
+    Supports exact name, 1-based index, glob, and regex ("re:...").
     """
     s = spec.strip()
     if available is None:
         return s
-    names = [str(x) for x in available]
+    labels = list(available)
+    names = [str(x) for x in labels]
 
+    # 1-based index
     if s.isdigit():
         idx = int(s) - 1
-        if 0 <= idx < len(names):
-            return names[idx]
+        if 0 <= idx < len(labels):
+            return labels[idx]
         raise IndexError(f"Column index out of range: {s}")
-
-    if s in names:
-        return s
-
-    if any(ch in s for ch in "*?"):
-        matches = [n for n in names if fnmatch(n, s)]
-        if len(matches) == 1:
-            return matches[0]
-        raise KeyError(f"Ambiguous glob or no match: {s} -> {matches}")
-
+    # regex
     if s.startswith("re:"):
-        pat = re.compile(s[3:])
-        matches = [n for n in names if pat.search(n)]
-        if len(matches) == 1:
-            return matches[0]
-        raise KeyError(f"Ambiguous regex or no match: {s} -> {matches}")
+        import re as _re
+        pat = _re.compile(s[3:])
+        hits = [lab for lab, name in zip(labels, names) if pat.search(name)]
+        if len(hits) == 1:
+            return hits[0]
+        if not hits:
+            raise KeyError(f"No columns match regex: {s[3:]}")
+        raise KeyError(f"Regex matches multiple columns: {s[3:]}")
+    # glob
+    if any(ch in s for ch in "*?"):
+        from fnmatch import fnmatch as _fnmatch
+        hits = [lab for lab, name in zip(labels, names) if _fnmatch(name, s)]
+        if len(hits) == 1:
+            return hits[0]
+        if not hits:
+            raise KeyError(f"No columns match glob: {s}")
+        raise KeyError(f"Glob matches multiple columns: {s}")
+    # exact by string projection
+    try:
+        j = names.index(s)
+        return labels[j]
+    except ValueError:
+        raise KeyError(f"Unknown column: {s}")
 
-    raise KeyError(f"Unknown column: {s}")
 
 def resolve_columns_advanced(df: pd.DataFrame, specs: Iterable[str]) -> List[str]:
     """
@@ -130,57 +136,63 @@ def resolve_columns_advanced(df: pd.DataFrame, specs: Iterable[str]) -> List[str
             out.append(c)
     return out
 
-def parse_multi_cols(spec: str, available: Optional[Sequence[str]] = None) -> List[str]:
+def parse_multi_cols(spec: str, available: Optional[Sequence] = None) -> List:
     """
-    Resolve comma-separated specs. Supports:
-      - exact names,
-      - 1-based indices,
-      - numeric ranges "2-5",
-      - name ranges "A:C",
-      - glob patterns,
-      - regex via "re:pattern".
-    Deduplicates while preserving order. If available is None, returns tokens trimmed.
+    Resolve comma-separated specs while preserving ORIGINAL labels (types).
+    Supports exact names, 1-based indices, numeric ranges "2-5", name ranges "A:C",
+    glob, and regex via "re:...".
     """
-    tokens = [s.strip() for s in spec.split(",") if s.strip()]
+    tokens = [s.strip() for s in str(spec).split(",") if s.strip()]
     if available is None:
         return tokens
+    labels = list(available)
+    names  = [str(x) for x in labels]
 
-    names = [str(x) for x in available]
-    out: List[str] = []
+    out: List = []
+    import re as _re
+    from fnmatch import fnmatch as _fnmatch
+    import pandas as _pd
+
     for tok in tokens:
         # 1-based numeric range
-        if re.fullmatch(r"\d+-\d+", tok):
+        if _re.fullmatch(r"\d+-\d+", tok):
             a, b = map(int, tok.split("-"))
             a -= 1; b -= 1
             rng = range(min(a, b), max(a, b) + 1)
-            out.extend(names[i] for i in rng); continue
-        # name range A:C (but not regex)
+            out.extend(labels[i] for i in rng); continue
+        # name range A:C
         if ":" in tok and not tok.startswith("re:"):
-            df = pd.DataFrame(columns=names)
-            out.extend(resolve_columns_advanced(df, [tok])); continue
+            df = _pd.DataFrame(columns=names)
+            sel = resolve_columns_advanced(df, [tok])  # returns string names
+            s2l = {str(l): l for l in labels}
+            out.extend(s2l[s] for s in sel if s in s2l); continue
         # regex
         if tok.startswith("re:"):
-            pat = re.compile(tok[3:])
-            out.extend([n for n in names if pat.search(n)]); continue
+            pat = _re.compile(tok[3:])
+            out.extend([lab for lab, s in zip(labels, names) if pat.search(s)]); continue
         # glob
         if any(ch in tok for ch in "*?"):
-            out.extend([n for n in names if fnmatch(n, tok)]); continue
+            out.extend([lab for lab, s in zip(labels, names) if _fnmatch(s, tok)]); continue
         # single 1-based index
         if tok.isdigit():
             idx = int(tok) - 1
-            if 0 <= idx < len(names):
-                out.append(names[idx]); continue
+            if 0 <= idx < len(labels):
+                out.append(labels[idx]); continue
             raise IndexError(f"Column index out of range: {tok}")
-        # exact
-        if tok in names:
-            out.append(tok); continue
-        raise KeyError(f"Unknown column: {tok}")
+        # exact by string projection
+        try:
+            j = names.index(tok)
+            out.append(labels[j]); continue
+        except ValueError:
+            raise KeyError(f"Unknown column: {tok}")
 
-    seen = set(); uniq: List[str] = []
+    seen = set(); uniq: List = []
     for c in out:
         if c not in seen:
             seen.add(c); uniq.append(c)
     return uniq
+
+
 
 
 

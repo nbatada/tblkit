@@ -1,8 +1,11 @@
 from __future__ import annotations
-import sys
-import re
 import pandas as pd
+from pandas.errors import EmptyDataError, ParserError
+import io as _io
+import csv
+import re
 from typing import Optional
+import sys
 
 def _normalize_sep(sep: Optional[str]) -> str:
     """
@@ -26,82 +29,104 @@ def _normalize_sep(sep: Optional[str]) -> str:
         return r"\s+"
     return s  # literal or regex (multi-char ok)
 
+
 def read_table(path: Optional[str],
                *,
-               sep: str = "\t",
+               sep: str | None = "\t",
                header: Optional[int] = 0,
                encoding: str = "utf-8",
                na_values=None,
                on_bad_lines: str | None = "error") -> pd.DataFrame:
     """
-    Read a delimited table from a path or stdin.
-      - path None or "-" → read from stdin
-      - sep: token or literal or regex (csv, tsv, tab, pipe, space, '\\t', ',', etc.)
-      - header=0 includes header; header=None for headerless
-      - on_bad_lines: 'error' | 'warn' | 'skip' (pandas >=1.3)
+    Robust reader: auto-detect delimiter for stdin/files; always respect quotes.
+    Handles CSV/TSV/pipe/whitespace and retries sensible fallbacks on parser errors.
     """
-    import io as _io
+    import io as _io, re as _re, csv as _csv
     from pandas.errors import EmptyDataError, ParserError
 
-    use_sep = _normalize_sep(sep)
-    if not use_sep:
-        use_sep = ","
-    # If multi-char and not obviously a regex, coerce to comma to avoid csv-engine errors.
-    if len(use_sep) > 1 and not re.search(r"[\\\[\]\+\*\?\|\(\)]", use_sep):
-        use_sep = ","
-        
-    need_python = (len(use_sep) > 1) or (use_sep.startswith("\\")
-                    or bool(re.search(r"\\|[\[\]\+\*\?\|\(\)]", use_sep)))
+    def _norm(s):
+        if s is None:
+            return None
+        low = str(s).lower()
+        if low in {"auto", "guess"}:
+            return None
+        if low in {"csv", "comma", ","}:
+            return ","
+        if low in {"tsv", "tab", "\\t"}:
+            return "\t"
+        if low in {"pipe", "bar", "|"}:
+            return "|"
+        if low in {"space", "spaces", "whitespace"}:
+            return r"\s+"
+        return s
 
-    # Buffer stdin so we can detect empties/404/HTML and still parse once.
+    def _detect(text):
+        lines = [ln for ln in text.splitlines() if ln.strip()][:200]
+        sample = "\n".join(lines)
+        # Count candidates outside of obvious quoted regions (lightweight)
+        def _score(ch):
+            # remove simple quoted spans to avoid inflated counts
+            stripped = _re.sub(r'"[^"\n]*"', "", sample)
+            return stripped.count(ch)
+        tab, com, pipe, sp = sample.count("\t"), _score(","), _score("|"), len(_re.findall(r"[ ]{1,}", sample))
+        if tab > 0 and tab >= com and tab >= pipe:
+            return "\t"
+        if com > 0 and com >= pipe:
+            return ","
+        if pipe > 0:
+            return "|"
+        # Fallback: treat runs of whitespace as separator
+        return r"\s+"
+
+    # Read stdin (text) or use a file path; also keep a peek for detection
+    where = "stdin" if path in (None, "-") else str(path)
+    text = None
     if path in (None, "-"):
-        raw = sys.stdin.buffer.read()
-        try:
-            text = raw.decode(encoding, errors="replace")
-        except Exception:
-            text = raw.decode("utf-8", errors="replace")
+        text = _io.TextIOWrapper(__import__("sys").stdin.buffer, encoding=encoding).read()
 
-        sample = text.strip()
-        if not sample:
-            raise ValueError("No input data received on stdin.")
-        if len(sample) <= 64 and "not found" in sample.lower():
-            raise ValueError("Input looks like a 404/Not Found payload. Check the URL/path.")
-        if "<html" in sample[:256].lower() or "<!doctype" in sample[:256].lower():
-            raise ValueError("Input looks like HTML, not a delimited table. Use a raw file URL.")
-        source = _io.StringIO(text)
-        where = "stdin"
-    else:
-        source = path
-        where = str(path)
+    requested = _norm(sep)
+    use_sep = requested if requested is not None else _detect(text if text is not None else open(where, "r", encoding=encoding).read(100_000))
 
-    try:
-        df = pd.read_csv(
+    # Choose engine
+    need_python = bool(use_sep) and (len(use_sep) > 1 or use_sep == r"\s+")
+    quoting = _csv.QUOTE_MINIMAL  # respect quotes for ALL seps
+
+    # Prepare source for pandas
+    source = _io.StringIO(text) if text is not None else where
+
+    def _read(try_sep):
+        return pd.read_csv(
             source,
-            sep=use_sep,
+            sep=try_sep,
             header=header,
             encoding=encoding,
             na_values=na_values,
-            on_bad_lines=on_bad_lines,  # pandas >= 1.3
-            engine="python" if need_python else None,
+            engine="python" if (need_python or try_sep == r"\s+") else None,
+            quoting=quoting,
+            quotechar='"',
+            doublequote=True,
+            escapechar="\\",
+            on_bad_lines=on_bad_lines,
             compression="infer",
         )
-        return df
-    except TypeError as te:
-        if "on_bad_lines" in str(te):
-            df = pd.read_csv(
-                source,
-                sep=use_sep,
-                header=header,
-                encoding=encoding,
-                na_values=na_values,
-                engine="python" if need_python else None,
-                compression="infer",
-            )
-            return df
+
+    # First attempt
+    try:
+        return _read(use_sep)
+    except ParserError:
+        # Retry alternates if auto/guess likely went wrong
+        alternates = []
+        for cand in ("\t", ",", "|", r"\s+"):
+            if cand != use_sep:
+                alternates.append(cand)
+        for cand in alternates:
+            source.seek(0) if isinstance(source, _io.StringIO) else None
+            try:
+                return _read(cand)
+            except ParserError:
+                continue
         raise
     except (EmptyDataError, ParserError) as e:
-        raise ValueError(f"Failed to read table from {where}: {e}") from e
-    except Exception as e:
         raise ValueError(f"Failed to read table from {where}: {e}") from e
 
 
