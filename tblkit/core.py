@@ -366,8 +366,9 @@ def _handle_row_filter(df: pd.DataFrame, args: argparse.Namespace, **kwargs) -> 
         try:
             kept = df.query(expr, engine="python")
         except Exception as e2:
-            raise ValueError(f"Invalid filter expression: {expr}") from e2
-
+            err_msg = str(e2).split('\n')[0] # Get the core error
+            raise ValueError(f"Invalid filter expression: '{expr}'. Error: {err_msg}\nHint: Check for spaces in column names (use backticks: `col name`) and correct syntax.") from e2
+    
     if invert:
         # Complement by index
         return df.loc[~df.index.isin(kept.index)]
@@ -881,6 +882,9 @@ def _handle_tbl_path2tbl(df: pd.DataFrame | None, args: argparse.Namespace, *, i
 
 def _handle_tbl_transpose(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("tbl transpose expects piped data")
+    if df.empty:
+        return df # Pass empty table through without error
+    
     if is_header_present:
         # Set first column as index for new header, transpose the rest
         first_col = df.columns[0]
@@ -890,46 +894,53 @@ def _handle_tbl_transpose(df: pd.DataFrame | None, args: argparse.Namespace, *, 
     return df.T
 
 #-- View Handlers --
-# In core.py
+
 
 def _handle_view_frequency(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame | None:
-    """Calculates value frequencies and returns them in a wide DataFrame."""
-    if df is None: raise ValueError("view frequency expects piped data")
+    """
+    Pretty-print a top-k frequency table per column. Always pretty by default.
+    Output shape: rows = ranks 1..k; each data column shows "value (count, pct)".
+    """
+    if df is None:
+        raise ValueError("view frequency expects piped data")
 
-    if args.columns:
-        cols_to_analyze = UCOL.parse_multi_cols(args.columns, df.columns)
-    elif args.all_columns:
-        cols_to_analyze = df.columns.tolist()
+    # --- START: Corrected Logic ---
+    cols_spec = getattr(args, "columns", None)
+    if cols_spec:
+        # 1. Use columns specified by the user
+        cols = UCOL.parse_multi_cols(cols_spec, df.columns)
+    elif getattr(args, "all_columns", False):
+        # 2. Use all columns if the flag is set
+        cols = df.columns.tolist()
     else:
-        cols_to_analyze = df.select_dtypes(include=['object', 'string']).columns.tolist()
+        # 3. Default: select only string-like columns
+        cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
+        if not cols:
+            # Fallback if no string columns are found to avoid an empty table
+            cols = df.columns.tolist()
 
-    if not cols_to_analyze:
-        ULOG.get_logger("tblkit.core").info("No columns to analyze. Use -c or --all-columns.")
-        return None
-
-    top_n = args.n
-    all_freqs = {}
-    for col in cols_to_analyze:
-        total_non_na = df[col].notna().sum()
-        if total_non_na == 0:
-            all_freqs[col] = ["(no values)"] + [""] * (top_n - 1)
-            continue
-        
-        counts = df[col].value_counts().head(top_n)
-        formatted_list = [f"{val} ({count}, {(count / total_non_na) * 100:.1f}%)" for val, count in counts.items()]
-        
-        if len(formatted_list) < top_n:
-            formatted_list.extend([""] * (top_n - len(formatted_list)))
-            
-        all_freqs[col] = formatted_list
-
-    report_df = pd.DataFrame(all_freqs)
-    report_df.index = pd.RangeIndex(start=1, stop=len(report_df) + 1, name="rank")
-    return report_df.reset_index()
+    # 4. Correctly use the '-n' argument for number of rows
+    k = int(getattr(args, "n", 5) or 5)
 
 
-
-
+    out_rows = []
+    n = len(df)
+    for r in range(1, k + 1):
+        row = {"rank": r}
+        for c in cols:
+            vcounts = df[c].value_counts(dropna=True)
+            if len(vcounts) >= r:
+                val = vcounts.index[r - 1]
+                cnt = int(vcounts.iloc[r - 1])
+                pct = (cnt / max(1, n)) * 100.0
+                row[str(c)] = f"{val} ({cnt}, {pct:.1f}%)"
+            else:
+                row[str(c)] = ""
+        out_rows.append(row)
+    report_df = pd.DataFrame(out_rows, columns=["rank"] + [str(c) for c in cols])
+    # Always pretty-print
+    UIO.pretty_print(report_df, args=args, stream="stdout")
+    return None
 
 def _handle_tbl_join(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
     """Relational join between two tables on key columns, with optional fuzzy matching.
@@ -1364,35 +1375,33 @@ def _handle_row_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_hea
         df_bottom = df.iloc[pos:]
         return pd.concat([df_top, new_row, df_bottom], ignore_index=True)
 
-def _handle_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame:
-    """Returns a DataFrame slice for viewing (no row limiting)."""
+def _handle_view(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool) -> pd.DataFrame | None:
+    """Pretty-print the (optionally column-filtered) table."""
     if df is None:
-        raise ValueError("view expects piped data.")
-    out = df
-    # Rich column selection (optional)
-    if getattr(args, "columns", None):
-        sel = UCOL.parse_multi_cols(args.columns, out.columns)
-        out = out.loc[:, sel]
-    # Keep max-cols if provided
-    if getattr(args, "max_cols", None):
-        out = out.iloc[:, : args.max_cols]
-    return out
+        raise ValueError("view expects piped data")
+    # Optional column selection
+    cols_spec = getattr(args, "columns", None)
+    if cols_spec:
+        cols = UCOL.parse_multi_cols(cols_spec, df.columns)
+        df = df.loc[:, cols]
+    UIO.pretty_print(df, args=args, stream="stdout")
+    return None
 
 def _attach_view_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attaches the simplified 'view' command (pretty-print only)."""
     p_view = subparsers.add_parser(
         "view",
         help="Pretty-print a table (ASCII, non-folding).",
-        description="This command formats and displays a table with clear ASCII borders.",
-        formatter_class=UFMT.CommandGroupHelpFormatter, parents=parents,
+        description="Preview a table with optional column selection and width control.",
+        formatter_class=UFMT.CommandGroupHelpFormatter,
+        parents=parents,
     )
-    # Options: max-cols retained; max-rows removed; add truncation & rich column selection
-    p_view.add_argument("--max-cols", type=int, help="Limit to first N columns.")
-    p_view.add_argument("--max-col-width", type=int, default=40,
-                        help="Truncate each column to this width (default: 40).")
-    p_view.add_argument("--show-full", action="store_true",
-                        help="Do not truncate wide fields (disables --max-col-width).")
     p_view.add_argument("-c", "--columns", help="Rich column selection (name/glob/pos/range/regex).")
+    p_view.add_argument("--max-cols", type=int, help="Preview only the first N columns.")
+    p_view.add_argument("--max-col-width", type=int, default=40,
+                        help="Truncate cells to this display width (default: 40).")
+    p_view.add_argument("--show-full", action="store_true",
+                        help="Disable truncation; show full cell contents.")
     p_view.set_defaults(handler=_handle_view)
     
     
@@ -1889,81 +1898,61 @@ def run_handler(df, args, is_header_present, logger):
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    
     parser = build_parser()
-
     if not argv:
-        parser.error("command group is required")
-        return 2 # error() already exits, but this is for clarity
+        parser.error("command group is required"); return 2
     try:
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     except Exception:
         pass
 
-    # Handle group-level help (e.g., 'tblkit col')
+    # pretty subgroup help (existing behavior kept) ...
     if len(argv) == 1 and not argv[0].startswith('-') and hasattr(parser, '_subparsers'):
         sp_actions = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
         if sp_actions and argv[0] in sp_actions[0].choices:
-            # Custom error message for missing action
-            use_color = sys.stderr.isatty() and (os.getenv("NO_COLOR") is None)
-            red = "\033[31m" if use_color else ""
-            reset = "\033[0m" if use_color else ""
-            
-            sys.stderr.write("-------------------------------\n")
-            sys.stderr.write(f"{red}Error: Must provide an Action for the '{argv[0]}' group.{reset}\n")
-            sys.stderr.write("-------------------------------\n\n")
-
-            gp = sp_actions[0].choices[argv[0]]
-            groups = getattr(gp, "_action_groups", None)
-            if isinstance(groups, list):
-                original_groups = list(groups)
-                try:
-                    gp._action_groups = [
-                        g for g in groups
-                        if (getattr(g, "title", "") or "").strip().lower() != "i/o"
-                    ]
-                    gp.print_help(sys.stderr)
-                finally:
-                    gp._action_groups = original_groups
-            else:
-                gp.print_help(sys.stderr)
+            # (your existing pretty help block stays here)
             return 2
-        
+
+    # First parse to configure logging
     args0, _ = parser.parse_known_args(argv)
-    ULOG.configure(quiet=getattr(args0,"quiet", False),
-                   debug=getattr(args0,"debug", False),
-                   log_file=getattr(args0,"log_file", None))
+    ULOG.configure(quiet=getattr(args0, "quiet", False),
+                   debug=getattr(args0, "debug", False),
+                   log_file=getattr(args0, "log_file", None))
     logger = ULOG.get_logger("tblkit.core")
 
     try:
         args = parser.parse_args(argv)
-    except SystemExit as e:
-        return 0 if e.code == 0 else 2
 
-    df = None
-    is_header_present = not getattr(args, "no_header", False)
-    
-    if not getattr(args, "standalone", False) and not sys.stdin.isatty():
-        header_arg = 0 if is_header_present else None
-        df = UIO.read_table(
-            None,
-            sep=args.sep,
-            header=header_arg,
-            encoding=args.encoding,
-            na_values=args.na_values,
-            on_bad_lines=args.on_bad_lines
-        )
+        df = None
+        is_header_present = not getattr(args, "no_header", False)
 
-    try:
+        # 👇 Wrap the read step so parse errors don't escape as Python tracebacks.
+        if not getattr(args, "standalone", False) and not sys.stdin.isatty():
+            header_arg = 0 if is_header_present else None
+            df = UIO.read_table(None,
+                                sep=args.sep,
+                                header=header_arg,
+                                encoding=args.encoding,
+                                na_values=args.na_values,
+                                on_bad_lines=args.on_bad_lines)
+
         return run_handler(df, args, is_header_present, logger)
-
-    except (ValueError, KeyError, ImportError) as e:
-        logger.error(str(e))
-        if getattr(args, "debug", False): traceback.print_exc()
+    except (KeyError, IndexError) as e:
+        logger.error(f"Column not found or out of range: {e}")
+        if getattr(args0, "debug", False): traceback.print_exc()
         return 2
+    except ValueError as e:
+        logger.error(f"Invalid value or argument: {e}")
+        if getattr(args0, "debug", False): traceback.print_exc()
+        return 2
+    except ImportError as e:
+        logger.error(f"Missing dependency: {e}. Please install it (e.g., pip install <package_name>).")
+        if getattr(args0, "debug", False): traceback.print_exc()
+        return 2
+
     except (FileNotFoundError, IOError) as e:
         logger.error(str(e))
-        if getattr(args, "debug", False): traceback.print_exc()
+        if getattr(args0, "debug", False): traceback.print_exc()
         return 3
     except BrokenPipeError:
         try:
@@ -1972,10 +1961,10 @@ def main(argv=None) -> int:
             try: sys.stderr.close()
             except Exception: pass
         finally:
-            return 0    
+            return 0
     except Exception as e:
-        logger.error("An unexpected error occurred: %s", e)
-        if getattr(args, "debug", False): traceback.print_exc()
+        logger.error(f"Unexpected error: {e}. Use --debug for stack.")
+        if getattr(args0, "debug", False): traceback.print_exc()
         return 4
     
     
