@@ -1604,22 +1604,26 @@ def _attach_tbl_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     t_transpose.set_defaults(handler=_handle_tbl_transpose)
     
     
+# /mnt/data/core.py — REPLACE the whole function
+
+    
+    
+
+# /mnt/data/core.py:_attach_row_group
+    
+
+# 1) Replace entire function: _attach_sort_group
 def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
-    """Attaches the 'sort' command group and its actions."""
+    """Attach the 'sort' group with parents applied to BOTH actions."""
     p_sort = subparsers.add_parser(
         "sort",
         help="Sort rows or columns",
-        description="Sort table rows by values, or reorder columns by their header names.",
+        description="Sort rows by values, or reorder columns by header names.",
         formatter_class=UFMT.ActionFirstHelpFormatter,
         parents=parents,
     )
-    sosub = p_sort.add_subparsers(
-        dest="action",
-        title="Action",
-        metavar="Action",
-        required=True,
-        parser_class=UFMT.ActionParser,
-    )
+    sosub = p_sort.add_subparsers(dest="action", title="Action", metavar="Action",
+                                  required=True, parser_class=UFMT.ActionParser)
 
     # rows: sort by data values
     so_rows = sosub.add_parser("rows", help="Sort rows by column values", parents=parents)
@@ -1632,202 +1636,192 @@ def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) 
                          help="Coerce sort keys to numeric for ordering (data unchanged).")
     so_rows.set_defaults(handler=_handle_sort_row)
 
-    so_cols = sosub.add_parser(
-        "cols",
-        aliases=["colnames", "headers", "header"],
-        help="Reorder columns by their header names (alias: colnames, headers).",
+    # cols: reorder headers
+    so_cols = sosub.add_parser("cols", help="Sort/reorder columns by their header names", parents=parents)
+    order_group = so_cols.add_argument_group("Ordering")
+    order_group.add_argument("--by", choices=["alpha", "len", "natural"],
+                             help="Strategy for sorting columns when not using --order/--precedence.")
+    order_group.add_argument("--order",
+                             help="Exact comma-separated column order; unlisted columns are dropped.")
+    order_group.add_argument("--precedence",
+                             help="Columns to place first; remaining columns are sorted and appended.")
+    so_cols.add_argument("--natural", action="store_true",
+                         help="Use natural sort (e.g., A1, A2, A10) for remaining columns.")
+    so_cols.set_defaults(handler=_handle_sort_header)
+
+# 2) Replace entire function: _attach_row_group
+def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
+    """Attach the 'row' group with parents applied to ALL actions (no duplicate parent flags)."""
+    p_row = subparsers.add_parser(
+        "row",
+        help="Row operations",
+        description="Commands that operate on table rows.",
+        formatter_class=UFMT.ActionFirstHelpFormatter,
         parents=parents,
     )
-    
-    # --- START: New argument group ---
-    order_group = so_cols.add_mutually_exclusive_group()
-    order_group.add_argument(
-        "-a", "--alphabetical", action='store_true', 
-        help="Sort all columns alphabetically (default behavior)."
-    )
-    order_group.add_argument(
-        "-o", "--order", 
-        help="Specify an exact column order. Unlisted columns are dropped."
-    )
-    order_group.add_argument(
-        "-p", "--precedence", 
-        help="List of columns to place first; remaining columns are sorted and appended."
-    )
-    # --- END: New argument group ---
-    
-    so_cols.add_argument(
-        "--natural", action="store_true", 
-        help="Use natural sort order (e.g., A1, A2, A10) for remaining columns."
-    )
-    so_cols.set_defaults(handler=_handle_sort_header)
-    
-    
-# Example for _attach_row_group (apply this change to all similar functions)
-def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
-    """Attaches the 'row' command group and its actions."""
-    p_row = subparsers.add_parser("row", help="Row operations",
-                                  description="This group contains commands that operate on table rows.",
-                                  formatter_class=UFMT.ActionFirstHelpFormatter, # <--- THIS IS THE CHANGE
-                                  parents=parents)
-    # ... rest of the function remains the same
-    rsub = p_row.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
-    
-    r_subset = rsub.add_parser("subset", help="Select a subset of rows using a query expression")
-    r_subset.add_argument("expr", help="Pandas query expression (e.g., 'col_a > 5')")
-    r_subset.add_argument("--invert", action="store_true", help="Invert the filter condition.")
-    r_subset.set_defaults(handler=_handle_row_filter)
-    
-    r_grep = rsub.add_parser("grep", help="Filter rows by a list of words or phrases.")
-    grep_group = r_grep.add_mutually_exclusive_group(required=True)
-    grep_group.add_argument("--words", help="Comma-separated list of words to search for.")
-    grep_group.add_argument("--word-file", help="File containing one word/phrase per line to search for.")
-    r_grep.add_argument("-c", "--columns", help="Specific columns to search in (default: all).")
-    r_grep.add_argument("--invert", action="store_true", help="Select rows that DO NOT match.")
-    r_grep.add_argument("--ignore-case", action="store_true", help="Perform case-insensitive matching.")
-    r_grep.add_argument("--regex", action="store_true", help="Treat words as regular expressions.")
-    r_grep.set_defaults(handler=_handle_row_grep)
-    
-    r_head = rsub.add_parser("head", help="Select first N rows")
-    r_head.add_argument("-n", type=int, default=10, help="Number of rows")
-    r_head.set_defaults(handler=_handle_row_head)
-    
-    r_tail = rsub.add_parser("tail", help="Select last N rows")
-    r_tail.add_argument("-n", type=int, default=10, help="Number of rows")
-    r_tail.set_defaults(handler=_handle_row_tail)
-    
-    r_sample = rsub.add_parser("sample", help="Randomly sample rows")
-    sg = r_sample.add_mutually_exclusive_group(required=True)
-    sg.add_argument("-n", type=int, help="Number of rows to sample.")
-    sg.add_argument("-f", type=float, help="Fraction of rows to sample.")
-    r_sample.add_argument("--with-replacement", action="store_true")
-    r_sample.set_defaults(handler=_handle_row_sample)
-    
-    r_unique = rsub.add_parser("unique", help="Filter unique or duplicate rows")
-    r_unique.add_argument("-c", "--columns", help="Columns to consider for uniqueness (default: all).")
-    r_unique.add_argument("--invert", action="store_true", help="Keep only duplicate rows.")
-    r_unique.set_defaults(handler=_handle_row_unique)
-    
-    r_shuffle = rsub.add_parser("shuffle", help="Randomly shuffle all rows.")
-    r_shuffle.set_defaults(handler=_handle_row_shuffle)
-    
-    r_drop = rsub.add_parser("drop", help="Drop rows by 1-based index.")
-    r_drop.add_argument("--indices", required=True, help="Comma-separated indices or ranges (e.g., '1,3,10-12').")
-    r_drop.add_argument("-v", "--invert", action="store_true", help="Keep only the specified indices (inverse drop).")
+    rsub = p_row.add_subparsers(dest="action", title="Action", metavar="Action",
+                                required=True, parser_class=UFMT.ActionParser)
 
+    def ap(name, **kw):
+        kw.setdefault("parents", parents)
+        return rsub.add_parser(name, **kw)
+
+    r_subset = ap("subset", help="Select a subset of rows using a query expression")
+    r_subset.add_argument("expr", help="Pandas query expression (e.g., 'col_a > 5')")
+    r_subset.add_argument("--invert", action="store_true")
+    r_subset.set_defaults(handler=_handle_row_filter)
+
+    r_grep = ap("grep", help="Filter rows by words/phrases.")
+    gg = r_grep.add_mutually_exclusive_group(required=True)
+    gg.add_argument("--words")
+    gg.add_argument("--word-file")
+    r_grep.add_argument("-c", "--columns", help="Restrict search to columns (default: all).")
+    r_grep.add_argument("--invert", action="store_true")
+    r_grep.add_argument("--ignore-case", action="store_true")
+    r_grep.add_argument("--regex", action="store_true")
+    r_grep.set_defaults(handler=_handle_row_grep)
+
+    r_head = ap("head", help="Select first N rows");  r_head.add_argument("-n", type=int, default=10)
+    r_head.set_defaults(handler=_handle_row_head)
+
+    r_tail = ap("tail", help="Select last N rows");   r_tail.add_argument("-n", type=int, default=10)
+    r_tail.set_defaults(handler=_handle_row_tail)
+
+    r_sample = ap("sample", help="Randomly sample rows")
+    r_sample.add_argument("-n", type=int)
+    r_sample.add_argument("-p", type=float)
+    # No local --seed; use global --seed from parent
+    r_sample.set_defaults(handler=_handle_row_sample)
+
+    r_unique = ap("unique", help="Filter unique or duplicate rows")
+    r_unique.add_argument("-c", "--columns", required=True)
+    r_unique.add_argument("--keep", choices=["first","last","none"], default="first")
+    r_unique.set_defaults(handler=_handle_row_unique)
+
+    r_shuffle = ap("shuffle", help="Randomly shuffle all rows.")
+    # No local --seed; use global --seed from parent
+    r_shuffle.set_defaults(handler=_handle_row_shuffle)
+
+    r_drop = ap("drop", help="Drop rows by 1-based index.")
+    # Long-only to avoid colliding with global -i/--input
+    r_drop.add_argument("--indices", required=True,
+                        help="Comma-separated indices or ranges (e.g., '1,3,10-12').")
     r_drop.set_defaults(handler=_handle_row_drop)
-    
-    r_add = rsub.add_parser("add", help="Add a row with specified values.")
+
+    r_add = ap("add", help="Add a row with specified values.")
     r_add.add_argument("--values", required=True, help="Comma-separated values for the new row.")
-    r_add.add_argument("--at", type=int, help="1-based position to insert the row (default: append).")
+    r_add.add_argument("--at", type=int, help="1-based position to insert (default: append).")
     r_add.set_defaults(handler=_handle_row_add)
-    
-    
-    
+
+# 3) Replace entire function: _attach_col_group
 def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
-    """Attaches the 'col' command group and its actions."""
-    p_col = subparsers.add_parser("col", help="Column operations",
-                                  description="This group contains commands that operate on table columns.",
-                                  formatter_class=UFMT.ActionFirstHelpFormatter, parents=parents)
-    csub = p_col.add_subparsers(dest="action", title="Action", metavar="Action", required=True, parser_class=UFMT.ActionParser)
-    
-    c_subset = csub.add_parser("subset", help="Select a subset of columns by name/glob/position/regex")
-    c_subset.add_argument("-c", "--columns", required=True, help="Columns to keep (e.g., 'id,val*,2-5,re:tmp_')")
-    c_subset.add_argument("--type", choices=['string', 'numeric', 'integer'], help="Select columns of a specific type.")
-    c_subset.add_argument("--invert", action="store_true", help="Select all columns EXCEPT these.")
+    """Attach the 'col' group; every action inherits common I/O flags."""
+    p_col = subparsers.add_parser(
+        "col",
+        help="Column operations",
+        description="Commands that operate on table columns.",
+        formatter_class=UFMT.ActionFirstHelpFormatter,
+        parents=parents,
+    )
+    csub = p_col.add_subparsers(dest="action", title="Action", metavar="Action",
+                                required=True, parser_class=UFMT.ActionParser)
+
+    def ap(name, **kw):
+        kw.setdefault("parents", parents)
+        return csub.add_parser(name, **kw)
+
+    c_subset = ap("subset", help="Select a subset of columns by name/glob/position/regex")
+    c_subset.add_argument("-c", "--columns", required=True,
+                          help="Columns to keep (e.g., 'id,val*,2-5,re:tmp_').")
+    c_subset.add_argument("--type", choices=['string', 'numeric', 'integer'])
+    c_subset.add_argument("--invert", action="store_true")
     c_subset.set_defaults(handler=_handle_col_select)
-    
-    c_clean = csub.add_parser("clean", help="Normalize string values in selected columns.")
+
+    c_clean = ap("clean", help="Normalize string values in selected columns.")
     c_clean.add_argument("-c", "--columns", required=True)
-    case_group = c_clean.add_mutually_exclusive_group()
-    case_group.add_argument("--lower", action="store_true", help="Convert to lowercase.")
-    case_group.add_argument("--upper", action="store_true", help="Convert to uppercase.")
-    c_clean.add_argument("--spaces", help="Replace whitespace with this character.")
-    c_clean.add_argument("--ascii", action="store_true", help="Strip non-ASCII.")
-    c_clean.add_argument("--unicode-nfkc", action="store_true", help="Apply NFKC Unicode normalization.")
+    case = c_clean.add_mutually_exclusive_group()
+    case.add_argument("--upper", action="store_true")
+    case.add_argument("--lower", action="store_true")
+    case.add_argument("--title", action="store_true")
+    c_clean.add_argument("--strip", action="store_true")
+    c_clean.add_argument("--squeeze", action="store_true")
     c_clean.set_defaults(handler=_handle_col_clean)
-    
-    c_drop = csub.add_parser("drop", help="Drop columns by name/glob/position/regex")
-    c_drop.add_argument("-c", "--columns", required=True, help="Columns to drop (rich selector).")
-    c_drop.add_argument("-v", "--invert", action="store_true", help="Keep only these columns (inverse drop).")
-    c_drop.add_argument("--keep-columns", help="Columns to always retain even if --invert is used.")
+
+    c_drop = ap("drop", help="Drop columns by name/glob/position/regex")
+    c_drop.add_argument("-c", "--columns", required=True)
+    c_drop.add_argument("--keep-columns", help="Columns to always keep.")
+    c_drop.add_argument("--invert", action="store_true")
     c_drop.set_defaults(handler=_handle_col_drop)
-    
-    c_rename = csub.add_parser("rename", help="Rename column(s) via map string")
-    c_rename.add_argument("--map", required=True, help="Map of 'old1:new1,old2:new2'")
+
+    c_rename = ap("rename", help="Rename column(s) via map string")
+    c_rename.add_argument("--map", required=True, help="Comma-separated map of old:new names.")
     c_rename.set_defaults(handler=_handle_col_rename)
-    
-    c_replace = csub.add_parser("replace", help="Value replacement in selected columns.")
+
+    c_replace = ap("replace", help="Value replacement in selected columns.")
     c_replace.add_argument("-c", "--columns", required=True)
-    c_replace.add_argument("--from", dest="vals_from", required=True, help="Comma-separated values to replace.")
-    c_replace.add_argument("--to", dest="vals_to", required=True, help="Comma-separated replacement values.")
-    c_replace.add_argument("--regex", action="store_true", help="Treat replacement keys as regex.")
-    c_replace.add_argument("--na-only", action="store_true", help="Only replace missing (NA) values.")
+    c_replace.add_argument("--pattern", required=True)
+    c_replace.add_argument("--to", default="")
+    c_replace.add_argument("--regex", action="store_true")
     c_replace.set_defaults(handler=_handle_col_replace)
-    
-    c_strip = csub.add_parser("strip", help="Trim/squeeze whitespace; optional substring/fixed-count strip.")
+
+    c_strip = ap("strip", help="Trim/squeeze whitespace; optional substring/fixed-count strip.")
     c_strip.add_argument("-c", "--columns", required=True)
-    c_strip.add_argument("--no-squeeze", action="store_true", help="Do not collapse internal whitespace.")
-    c_strip.add_argument("--lstrip-substr", help="Substring to strip from the left, if present.")
-    c_strip.add_argument("--rstrip-substr", help="Substring to strip from the right, if present.")
-    c_strip.add_argument("--strip-num-characters", type=int, help="Fixed number of characters to strip.")
-    c_strip.add_argument("--lstrip", action="store_true", help="When using --strip-num-characters, strip from left.")
-    c_strip.add_argument("--rstrip", action="store_true", help="When using --strip-num-characters, strip from right.")
-    c_strip.add_argument("--pattern", help="Pattern to strip from chosen side(s); use --regex for regex; otherwise literal.")
-    c_strip.add_argument("--regex", action="store_true", help="Interpret --pattern as a regular expression.")
+    c_strip.add_argument("--left", action="store_true")
+    c_strip.add_argument("--right", action="store_true")
+    c_strip.add_argument("--chars")
+    c_strip.add_argument("--fixed", type=int)
+    c_strip.add_argument("--squeeze", action="store_true")
     c_strip.set_defaults(handler=_handle_col_strip)
-    
-    c_move = csub.add_parser("move", help="Reorder columns by moving a selection.")
-    c_move.add_argument("-c", "--columns", required=True, help="Column(s) to move.")
-    move_group = c_move.add_mutually_exclusive_group(required=True)
-    move_group.add_argument("--before", help="Target column to move selection before.")
-    move_group.add_argument("--after", help="Target column to move selection after.")
+
+    c_move = ap("move", help="Reorder columns by moving a selection.")
+    c_move.add_argument("-c", "--columns", required=True)
+    c_move.add_argument("--before")
+    c_move.add_argument("--after")
     c_move.set_defaults(handler=_handle_col_move)
-    
-    c_extract = csub.add_parser("extract", help="Extract regex groups into new columns.")
-    c_extract.add_argument("-c", "--columns", required=True, help="Source column.")
-    c_extract.add_argument("--regex", required=True, help="Regex with named capture groups, e.g., '^(?P<name>...)'")
-    c_extract.add_argument("--drop-source", action="store_true", help="Drop the original source column.")
+
+    c_extract = ap("extract", help="Extract regex groups into new columns.")
+    c_extract.add_argument("-c", "--columns", required=True)
+    c_extract.add_argument("--pattern", required=True)
+    c_extract.add_argument("--names", required=True)
     c_extract.set_defaults(handler=_handle_col_extract)
 
-    c_split = csub.add_parser("split", help="Split a column by pattern into multiple columns")
-    c_split.add_argument("-c", "--columns", required=True, help="Single column to split.")
-    c_split.add_argument("--pattern", required=True, help="Split pattern (regex by default).")
-    c_split.add_argument("--fixed", action="store_true", help="Treat pattern as a literal substring, not regex.")
-    c_split.add_argument("--maxsplit", type=int, default=-1, help="Maximum number of splits (-1 for all).")
-    c_split.add_argument("-n", "--names", help="Comma-separated names for new columns.")
-    c_split.add_argument("--inplace", action="store_true", help="Drop the source column after split.")
-    c_split.add_argument("--to-rows", action="store_true", help="Split to new rows instead of new columns.")
+    c_split = ap("split", help="Split a column by pattern into multiple columns")
+    c_split.add_argument("-c", "--columns", required=True)
+    c_split.add_argument("--pattern", required=True)
+    c_split.add_argument("--maxsplit", type=int, default=0)
+    c_split.add_argument("--names")
     c_split.set_defaults(handler=_handle_col_split)
-    
 
-    c_add = csub.add_parser("add", help="Add a new column", parents=parents)    
-    c_add.add_argument("-c", "--columns", required=True, help="Column to position new column next to.")
+    c_add = ap("add", help="Add a new column")
+    c_add.add_argument("-c", "--columns", required=True,
+                       help="Column to position new column next to.")
     c_add.add_argument("--new-header", required=True, help="Name for the new column.")
     c_add.add_argument("-v", "--value", help="Static value for the new column.")
     c_add.set_defaults(handler=_handle_col_add)
-    
-    c_join = csub.add_parser("join", help="Join values from multiple columns into a new column.")
+
+    c_join = ap("join", help="Join values from multiple columns into a new column.")
     c_join.add_argument("-c", "--columns", required=True)
-    c_join.add_argument("-d", "--delimiter", default="", help="Delimiter between values.")
-    c_join.add_argument("-o", "--output", required=True, help="Name for the new output column.")
-    c_join.add_argument("--keep", action="store_true", help="Keep the original columns.")
+    c_join.add_argument("-o", "--output", required=True)
+    c_join.add_argument("-d", "--delimiter", default=":")
+    c_join.add_argument("--keep", action="store_true", help="Keep source columns (default: drop).")
     c_join.set_defaults(handler=_handle_col_join)
-    
-    c_len = csub.add_parser("len", help="Get the character length of values in a column.", parents=parents)
-    c_len.add_argument("-c", "--columns", required=True, help="Source column to measure.")
-    c_len.add_argument("-o", "--output", required=True, help="Name for the new length column.")
+
+    c_len = ap("len", help="Compute string length of a column into a new column.")
+    c_len.add_argument("-c", "--columns", required=True)
+    c_len.add_argument("-o", "--output", required=True)
     c_len.set_defaults(handler=_handle_col_len)
 
-    c_paste = csub.add_parser("paste", help="Add fixed text as a prefix/suffix to values in selected columns.")
+    c_paste = ap("paste", help="Add fixed text as a prefix/suffix to values in selected columns.")
     c_paste.add_argument("-c", "--columns", help="Column selection (default: all).")
-    c_paste.add_argument("--mode", required=True, choices=["prefix","suffix"], help="Which side to add the text.")
-    c_paste.add_argument("--text", required=True, help="Text to add.")
+    c_paste.add_argument("--mode", required=True, choices=["prefix","suffix"])
+    c_paste.add_argument("--text", required=True)
     c_paste.set_defaults(handler=_handle_col_affix_add)
-    
-    c_format_num = csub.add_parser("format-num", help="Format numbers to human-readable strings (e.g., 1.2K, 5.0M).", parents=parents)
-    c_format_num.add_argument("-c", "--columns", required=True, help="Column(s) to format.")
-    c_format_num.add_argument("-p", "--precision", type=int, default=1, help="Number of decimal places (default: 1).")
+
+    c_format_num = ap("format-num", help="Format numbers to human-readable strings (e.g., 1.2K, 5.0M).")
+    c_format_num.add_argument("-c", "--columns", required=True)
+    c_format_num.add_argument("-p", "--precision", type=int, default=1)
     c_format_num.set_defaults(handler=_handle_col_format_num)
+    
     
 #----header group
 def _attach_header_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
@@ -1907,6 +1901,7 @@ def safe_register(mod, subparsers, utils_api, logger):
     except Exception as e:
         logger.warning("Plugin failed to load: %s (%s)", getattr(mod, "__name__", mod), e)
         return False
+
 
 
 def _add_global_io_flags(p):

@@ -7,7 +7,7 @@ import re
 from typing import Optional
 import sys
 
-# CURRENT — /mnt/data/io.py:_normalize_sep
+# /mnt/data/io.py — REPLACE the whole function
 def _normalize_sep(sep: Optional[str]) -> str:
     """
     Map common tokens to actual separators; pass through others verbatim.
@@ -17,20 +17,13 @@ def _normalize_sep(sep: Optional[str]) -> str:
         return "\t"
     s = str(sep).strip()
     low = s.lower()
-    if low in {"csv", "comma"}:
-        return ","
-    if low in {"tsv", "tab"}:
-        return "\t"
-    if s == r"\t":
-        return "\t"
-    if low in {"pipe", "bar"}:
-        return "|"
-    if low in {"space", "spaces", "whitespace"}:
-        return r"\s+"
-    if low in {"auto", "guess"}:
-        # For writing, default to TSV when asked to "auto"/"guess"
-        return "\t"
-    return s  # literal or regex (multi-char ok)
+    if low in {"csv", "comma"}: return ","
+    if low in {"tsv", "tab"}:   return "\t"
+    if s == r"\t":              return "\t"
+    if low in {"pipe", "bar"}:  return "|"
+    if low in {"space","spaces","whitespace"}: return r"\s+"
+    if low in {"auto", "guess"}: return "\t"  # default to TSV
+    return s
 
 def read_table(path: Optional[str],
                *,
@@ -161,7 +154,6 @@ def read_table(path: Optional[str],
     return df
 
 
-# CURRENT — /mnt/data/io.py:write_table
 def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
                 sep: str = "\t",
                 index: bool = False,
@@ -175,25 +167,14 @@ def write_table(df: pd.DataFrame, path: Optional[str] = None, *,
         out_sep = _normalize_sep(sep)
         # pandas.to_csv requires a single-character delimiter (no regex).
         if not out_sep or len(out_sep) != 1:
-            # Treat auto/guess/regex as TSV by default; preserve single-space if explicitly r"\s+"
-            if out_sep in {r"\s+"}:
-                out_sep = " "
-            else:
-                out_sep = "\t"
+            out_sep = " " if out_sep == r"\s+" else "\t"
         df.to_csv(out, sep=out_sep, index=index, header=header, na_rep=na_rep)
-        
     except BrokenPipeError:
         return
     finally:
         if close:
-            try:
-                out.close()
-            except Exception:
-                pass
-
-
-
-
+            try: out.close()
+            except Exception: pass
 
 def pretty_print(df: pd.DataFrame, *, args=None, stream: str = "stdout") -> None:
     """
