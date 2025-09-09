@@ -14,15 +14,15 @@ def build_epilog(title: str, items: list[str]) -> str:
     return "\n".join(lines)
 
 
+# PROPOSED REPLACEMENT — /mnt/data/parsing.py:add_common_io_args
 def add_common_io_args(ap: argparse.ArgumentParser) -> None:
     g = ap.add_argument_group("I/O")
     g.add_argument("-i", "--input", help="Input table file (default: stdin).")
     g.add_argument("-O", "--out-file", dest="out_file",
                    help="Output table file (default: stdout).")
-    g.add_argument("--sep", default="auto",
-                   help="Input field separator: auto,csv,tsv,|,space,\\t,',' (default: auto).")
-    g.add_argument("--output-sep", dest="output_sep",
-                   help="Output field separator (default: match input).")
+    g.add_argument("--sep", default="tsv",
+                   help="Input field separator: tsv,csv,|,space,\\t,',' (default: tsv).")
+
     g.add_argument("--encoding", default="utf-8",
                    help="Text encoding for I/O (default: utf-8).")
     g.add_argument("--na-values", nargs="+",
@@ -43,3 +43,4 @@ def add_common_io_args(ap: argparse.ArgumentParser) -> None:
                    help="Random seed for commands that sample or shuffle.")
     g.add_argument("--commands", action=UFMT.CommandsAction,
                    help="Show the available commands as a tree and exit.")
+    

@@ -345,8 +345,8 @@ def _handle_col_add(df: pd.DataFrame | None, args: argparse.Namespace, *, is_hea
 def _handle_col_join(df: pd.DataFrame | None, args: argparse.Namespace, *, is_header_present: bool):
     if df is None: raise ValueError("col join expects piped data")
     cols_to_join = UCOL.parse_multi_cols(args.columns, df.columns)
-    joined_series = df[cols_to_join].astype(str).agg(args.delimiter.join, axis=1)
-    
+
+    joined_series = df[cols_to_join].fillna("").astype(str).agg(args.delimiter.join, axis=1)
     min_idx = min(df.columns.get_loc(c) for c in cols_to_join)
     out = df.drop(columns=cols_to_join) if not args.keep else df.copy()
     out.insert(min_idx, args.output, joined_series)
@@ -1799,7 +1799,8 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_split.add_argument("--to-rows", action="store_true", help="Split to new rows instead of new columns.")
     c_split.set_defaults(handler=_handle_col_split)
     
-    c_add = csub.add_parser("add", help="Add a new column")
+
+    c_add = csub.add_parser("add", help="Add a new column", parents=parents)    
     c_add.add_argument("-c", "--columns", required=True, help="Column to position new column next to.")
     c_add.add_argument("--new-header", required=True, help="Name for the new column.")
     c_add.add_argument("-v", "--value", help="Static value for the new column.")
@@ -1909,15 +1910,10 @@ def safe_register(mod, subparsers, utils_api, logger):
 
 
 def _add_global_io_flags(p):
-    """
-    Global I/O flags available to all subcommands.
-    """
-    p.add_argument("--sep", default="\t",
-                   help="Input delimiter for reading tables (default: \\t).")
-    p.add_argument("--output-sep", dest="output_sep", default="\t",
-                   help="Output delimiter when printing tables (default: \\t).")
-    p.add_argument("--encoding", default="utf-8",
-                   help="File encoding for reading inputs (default: utf-8).")
+    """Single source of truth for global I/O flags."""
+    from tblkit.utils import parsing as UP
+    UP.add_common_io_args(p)
+
     
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1928,7 +1924,9 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False
     )
     # Global options
-    UP.add_common_io_args(ap)
+    #UP.add_common_io_args(ap)
+    _add_global_io_flags(ap)
+
     common_parent = argparse.ArgumentParser(add_help=False)
     UP.add_common_io_args(common_parent)
 
@@ -1986,7 +1984,12 @@ def run_handler(df, args, is_header_present, logger):
                 sep_from_df = getattr(res, "attrs", {}).get("tblkit_sep")
             except Exception:
                 pass
-            out_sep = getattr(args, "output_sep", None) or sep_from_df or getattr(args, "sep", "\t")
+            cli_sep = getattr(args, "output_sep", None)
+            if not cli_sep:
+                base_sep = getattr(args, "sep", None)
+                cli_sep = None if (base_sep is None or str(base_sep).lower() in {"auto", "guess"}) else base_sep
+            out_sep = cli_sep or sep_from_df or "\t"
+
             UIO.write_table(
                 res,
                 path=getattr(args, "out_file", None),
