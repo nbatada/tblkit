@@ -1649,9 +1649,9 @@ def _attach_sort_group(subparsers: argparse._SubParsersAction, *, parents=None) 
                          help="Use natural sort (e.g., A1, A2, A10) for remaining columns.")
     so_cols.set_defaults(handler=_handle_sort_header)
 
-# 2) Replace entire function: _attach_row_group
+
 def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
-    """Attach the 'row' group with parents applied to ALL actions (no duplicate parent flags)."""
+    """Attach the 'row' group with parents applied to ALL actions (so --sep etc. work after the action)."""
     p_row = subparsers.add_parser(
         "row",
         help="Row operations",
@@ -1671,7 +1671,7 @@ def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     r_subset.add_argument("--invert", action="store_true")
     r_subset.set_defaults(handler=_handle_row_filter)
 
-    r_grep = ap("grep", help="Filter rows by words/phrases.")
+    r_grep = ap("grep", help="Filter rows by a list of words or phrases.")
     gg = r_grep.add_mutually_exclusive_group(required=True)
     gg.add_argument("--words")
     gg.add_argument("--word-file")
@@ -1681,16 +1681,18 @@ def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     r_grep.add_argument("--regex", action="store_true")
     r_grep.set_defaults(handler=_handle_row_grep)
 
-    r_head = ap("head", help="Select first N rows");  r_head.add_argument("-n", type=int, default=10)
+    r_head = ap("head", help="Select first N rows")
+    r_head.add_argument("-n", type=int, default=10)
     r_head.set_defaults(handler=_handle_row_head)
 
-    r_tail = ap("tail", help="Select last N rows");   r_tail.add_argument("-n", type=int, default=10)
+    r_tail = ap("tail", help="Select last N rows")
+    r_tail.add_argument("-n", type=int, default=10)
     r_tail.set_defaults(handler=_handle_row_tail)
 
     r_sample = ap("sample", help="Randomly sample rows")
     r_sample.add_argument("-n", type=int)
     r_sample.add_argument("-p", type=float)
-    # No local --seed; use global --seed from parent
+    # use global --seed
     r_sample.set_defaults(handler=_handle_row_sample)
 
     r_unique = ap("unique", help="Filter unique or duplicate rows")
@@ -1699,21 +1701,22 @@ def _attach_row_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     r_unique.set_defaults(handler=_handle_row_unique)
 
     r_shuffle = ap("shuffle", help="Randomly shuffle all rows.")
-    # No local --seed; use global --seed from parent
+    # use global --seed
     r_shuffle.set_defaults(handler=_handle_row_shuffle)
 
     r_drop = ap("drop", help="Drop rows by 1-based index.")
-    # Long-only to avoid colliding with global -i/--input
     r_drop.add_argument("--indices", required=True,
                         help="Comma-separated indices or ranges (e.g., '1,3,10-12').")
+    r_drop.add_argument("-v", "--invert", action="store_true",
+                        help="Keep only the specified indices (inverse drop).")
     r_drop.set_defaults(handler=_handle_row_drop)
 
     r_add = ap("add", help="Add a row with specified values.")
     r_add.add_argument("--values", required=True, help="Comma-separated values for the new row.")
-    r_add.add_argument("--at", type=int, help="1-based position to insert (default: append).")
+    r_add.add_argument("--at", type=int, help="1-based position to insert the row (default: append).")
     r_add.set_defaults(handler=_handle_row_add)
 
-# 3) Replace entire function: _attach_col_group
+# /mnt/data/core.py — REPLACE ENTIRE FUNCTION
 def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -> None:
     """Attach the 'col' group; every action inherits common I/O flags."""
     p_col = subparsers.add_parser(
@@ -1731,8 +1734,7 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
         return csub.add_parser(name, **kw)
 
     c_subset = ap("subset", help="Select a subset of columns by name/glob/position/regex")
-    c_subset.add_argument("-c", "--columns", required=True,
-                          help="Columns to keep (e.g., 'id,val*,2-5,re:tmp_').")
+    c_subset.add_argument("-c", "--columns", required=True)
     c_subset.add_argument("--type", choices=['string', 'numeric', 'integer'])
     c_subset.add_argument("--invert", action="store_true")
     c_subset.set_defaults(handler=_handle_col_select)
@@ -1749,12 +1751,12 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
 
     c_drop = ap("drop", help="Drop columns by name/glob/position/regex")
     c_drop.add_argument("-c", "--columns", required=True)
-    c_drop.add_argument("--keep-columns", help="Columns to always keep.")
+    c_drop.add_argument("--keep-columns")
     c_drop.add_argument("--invert", action="store_true")
     c_drop.set_defaults(handler=_handle_col_drop)
 
     c_rename = ap("rename", help="Rename column(s) via map string")
-    c_rename.add_argument("--map", required=True, help="Comma-separated map of old:new names.")
+    c_rename.add_argument("--map", required=True)
     c_rename.set_defaults(handler=_handle_col_rename)
 
     c_replace = ap("replace", help="Value replacement in selected columns.")
@@ -1795,15 +1797,15 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_add = ap("add", help="Add a new column")
     c_add.add_argument("-c", "--columns", required=True,
                        help="Column to position new column next to.")
-    c_add.add_argument("--new-header", required=True, help="Name for the new column.")
-    c_add.add_argument("-v", "--value", help="Static value for the new column.")
+    c_add.add_argument("--new-header", required=True)
+    c_add.add_argument("-v", "--value")
     c_add.set_defaults(handler=_handle_col_add)
 
     c_join = ap("join", help="Join values from multiple columns into a new column.")
     c_join.add_argument("-c", "--columns", required=True)
     c_join.add_argument("-o", "--output", required=True)
     c_join.add_argument("-d", "--delimiter", default=":")
-    c_join.add_argument("--keep", action="store_true", help="Keep source columns (default: drop).")
+    c_join.add_argument("--keep", action="store_true")
     c_join.set_defaults(handler=_handle_col_join)
 
     c_len = ap("len", help="Compute string length of a column into a new column.")
@@ -1812,7 +1814,7 @@ def _attach_col_group(subparsers: argparse._SubParsersAction, *, parents=None) -
     c_len.set_defaults(handler=_handle_col_len)
 
     c_paste = ap("paste", help="Add fixed text as a prefix/suffix to values in selected columns.")
-    c_paste.add_argument("-c", "--columns", help="Column selection (default: all).")
+    c_paste.add_argument("-c", "--columns")
     c_paste.add_argument("--mode", required=True, choices=["prefix","suffix"])
     c_paste.add_argument("--text", required=True)
     c_paste.set_defaults(handler=_handle_col_affix_add)
@@ -1996,24 +1998,25 @@ def run_handler(df, args, is_header_present, logger):
     return 0
 
 
+# /mnt/data/core.py — REPLACE ENTIRE FUNCTION
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     parser = build_parser()
     if not argv:
         parser.error("command group is required"); return 2
+
     try:
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     except Exception:
         pass
 
-    # pretty subgroup help (existing behavior kept) ...
+    # pretty subgroup help
     if len(argv) == 1 and not argv[0].startswith('-') and hasattr(parser, '_subparsers'):
         sp_actions = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
         if sp_actions and argv[0] in sp_actions[0].choices:
-            # (your existing pretty help block stays here)
             return 2
 
-    # First parse to configure logging
+    # Configure logging early
     args0, _ = parser.parse_known_args(argv)
     ULOG.configure(quiet=getattr(args0, "quiet", False),
                    debug=getattr(args0, "debug", False),
@@ -2026,30 +2029,36 @@ def main(argv=None) -> int:
         df = None
         is_header_present = not getattr(args, "no_header", False)
 
-        # 👇 Wrap the read step so parse errors don't escape as Python tracebacks.
+        # Special-case: header view should not parse the whole file
+        only_header = (getattr(args, "group", None) == "header" and
+                       getattr(args, "action", None) == "view")
+
         if not getattr(args, "standalone", False) and not sys.stdin.isatty():
             header_arg = 0 if is_header_present else None
-            df = UIO.read_table(None,
-                                sep=args.sep,
-                                header=header_arg,
-                                encoding=args.encoding,
-                                na_values=args.na_values,
-                                on_bad_lines=args.on_bad_lines)
+            df = UIO.read_table(
+                None,
+                sep=args.sep,
+                header=header_arg,
+                encoding=args.encoding,
+                na_values=args.na_values,
+                on_bad_lines=("skip" if only_header else args.on_bad_lines),
+                nrows=(1 if only_header else None),
+            )
 
         return run_handler(df, args, is_header_present, logger)
+
     except (KeyError, IndexError) as e:
         logger.error(f"Column not found or out of range: {e}")
         if getattr(args0, "debug", False): traceback.print_exc()
         return 2
     except ValueError as e:
-        logger.error(f"Invalid value or argument: {e}")
+        logger.error(str(e))
         if getattr(args0, "debug", False): traceback.print_exc()
         return 2
     except ImportError as e:
-        logger.error(f"Missing dependency: {e}. Please install it (e.g., pip install <package_name>).")
+        logger.error(f"Missing dependency: {e}. Please install it.")
         if getattr(args0, "debug", False): traceback.print_exc()
         return 2
-
     except (FileNotFoundError, IOError) as e:
         logger.error(str(e))
         if getattr(args0, "debug", False): traceback.print_exc()

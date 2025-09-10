@@ -25,133 +25,73 @@ def _normalize_sep(sep: Optional[str]) -> str:
     if low in {"auto", "guess"}: return "\t"  # default to TSV
     return s
 
+# /mnt/data/io.py — REPLACE ENTIRE FUNCTION
 def read_table(path: Optional[str],
                *,
                sep: str | None = None,
                header: Optional[int] = 0,
                encoding: str = "utf-8",
                na_values=None,
-               on_bad_lines: str | None = "error") -> pd.DataFrame:
+               on_bad_lines: str | None = "error",
+               nrows: Optional[int] = None) -> pd.DataFrame:
     """
-    Robust reader with auto-detect + diagnostics.
-    On parse errors, reports line, expected vs seen fields, and a caret under the approximate offending column.
-    Also handles empty stdin and naive CSV→TSV warnings.
+    Robust reader with optional partial read (nrows) and clearer diagnostics.
+    Default separator is TSV; 'auto'/'guess' triggers lightweight detection.
     """
     import io as _io, re as _re, csv as _csv, sys as _sys
     from pandas.errors import ParserError, EmptyDataError
 
     def _norm(s):
         if s is None: return None
-        t = str(s).lower()
-        return {"csv": ",", ",": ",", "tsv": "\t", "tab": "\t", "\\t": "\t",
-                "pipe": "|", "bar": "|", "|": "|", "space": r"\s+", "spaces": r"\s+",
-                "whitespace": r"\s+", "auto": None, "guess": None}.get(t, s)
+        t = str(s).strip().lower()
+        return {
+            "tsv": "\t", "tab": "\t", "\\t": "\t",
+            "csv": ",", ",": ",",
+            "pipe": "|", "bar": "|", "|": "|",
+            "space": r"\s+", "spaces": r"\s+", "whitespace": r"\s+",
+            "auto": None, "guess": None
+        }.get(t, s)
 
     def _detect(text: str) -> str:
         sample = "\n".join([ln for ln in text.splitlines() if ln.strip()][:200])
         stripped = _re.sub(r'"[^"\n]*"', "", sample)
         counts = {"\t": sample.count("\t"), ",": stripped.count(","), "|": stripped.count("|")}
         best = max(counts, key=counts.get)
-        return best if counts[best] > 0 else r"\s+"
+        return best if counts[best] > 0 else "\t"
 
     where = "stdin" if path in (None, "-") else str(path)
-    raw = None
+
+    # Fast path: explicit non-auto sep on a real file
+    req_sep = _norm(sep)
+    if path not in (None, "-") and req_sep not in (None, r"\s+"):
+        return pd.read_csv(
+            where, sep=req_sep, header=header, encoding=encoding,
+            na_values=na_values, on_bad_lines=on_bad_lines, nrows=nrows
+        )
+
+    # Otherwise, read a text buffer (stdin or for auto-detect)
     if path in (None, "-"):
         raw = _io.TextIOWrapper(_sys.stdin.buffer, encoding=encoding).read()
         if raw == "":
-            raise ValueError("No input detected on stdin. Upstream produced no data (e.g., missing file) — pipe a table or use -i <file>.")
+            raise ValueError("No input detected on stdin. Pipe a table or use -i <file>.")
+    else:
+        with open(where, "r", encoding=encoding, errors="replace") as fh:
+            raw = fh.read()
 
-    req = _norm(sep)
-    use_sep = req if req is not None else _detect(raw or "")
-
-    # Warn for naive CSV→TSV via `tr` (thousands split)
-    if raw is not None and use_sep == "\t":
-        if _re.search(r"\b\d{1,3}\t\d{3}(?:\.\d+)?\b", raw):
-            _sys.stderr.write(
-                "tblkit: input looks like CSV converted with `tr`, which splits thousands like 1,521.64 -> 1\\t521.64.\n"
-                "        Read CSV directly (e.g., --sep csv) or use a CSV-aware converter.\n"
-            )
-
-    quoting = _csv.QUOTE_MINIMAL
+    use_sep = _detect(raw) if req_sep is None else req_sep
     engine = "python" if use_sep == r"\s+" else None
-    source = _io.StringIO(raw) if raw is not None else where
-
-    def _read(try_sep: str) -> pd.DataFrame:
-        return pd.read_csv(
-            source,
-            sep=try_sep,
-            header=header,
-            encoding=encoding,
-            na_values=na_values,
-            engine="python" if (engine or try_sep == r"\s+") else None,
-            quoting=quoting,
-            quotechar='"',
-            doublequote=True,
-            escapechar="\\",
-            on_bad_lines=on_bad_lines,
-            compression="infer",
-        )
-
-    def _diagnose_parse_error(e: Exception, active_sep: str) -> str:
-        if raw is None:
-            return f"{e}"
-        lines = raw.splitlines()
-        exp = None
-        if header == 0 and lines:
-            rdr = csv.reader([lines[0]], delimiter=(active_sep if len(active_sep) == 1 else ","), quotechar='"', escapechar="\\")
-            exp = len(next(rdr, []))
-        m = _re.search(r"[Ll]ine\s+(\d+)", str(e))
-        line_no = int(m.group(1)) if m else None
-        if line_no is None and exp is not None:
-            for i, ln in enumerate(lines[1:], start=2):
-                rdr = csv.reader([ln], delimiter=(active_sep if len(active_sep) == 1 else ","), quotechar='"', escapechar="\\")
-                seen = len(next(rdr, []))
-                if seen != exp:
-                    line_no = i; break
-        snippet, caret, seen = "", "", None
-        if line_no is not None and 1 <= line_no <= len(lines):
-            ln = lines[line_no - 1]; snippet = ln[:400]
-            try:
-                rdr = csv.reader([ln], delimiter=(active_sep if len(active_sep) == 1 else ","), quotechar='"', escapechar="\\")
-                fields = next(rdr, []); seen = len(fields)
-                bad_idx = exp if (exp is not None and seen > exp) else (seen if (exp is not None and seen < exp) else None)
-                if bad_idx is not None:
-                    cur = 0; delim = ("\t" if active_sep == "\t" else (active_sep if len(active_sep) == 1 else ","))
-                    for _ in range(bad_idx):
-                        pos = ln.find(delim, cur); 
-                        if pos == -1: break
-                        cur = pos + len(delim)
-                    caret = " " * max(0, cur) + "^"
-            except Exception:
-                pass
-        parts = []
-        if line_no is not None: parts.append(f"line {line_no}")
-        if exp is not None and seen is not None: parts.append(f"expected {exp} fields, saw {seen}")
-        msg = f"Failed to read table from {where}: " + (", ".join(parts) if parts else str(e))
-        if snippet:
-            msg += f"\n  {snippet}\n  {caret if caret else ''}"
-        msg += "\nHint: use --sep (csv/tsv/|/space), or --on-bad-lines skip|warn; check unclosed quotes."
-        return msg
+    source = _io.StringIO(raw)
 
     try:
-        df = _read(use_sep)
-    except ParserError as e:
-        for a in (s for s in ("\t", ",", "|", r"\s+") if s != use_sep):
-            if isinstance(source, _io.StringIO): source.seek(0)
-            try:
-                df = _read(a); use_sep = a; break
-            except ParserError:
-                continue
-        else:
-            raise ValueError(_diagnose_parse_error(e, use_sep))
+        return pd.read_csv(
+            source, sep=use_sep, header=header, encoding=encoding,
+            na_values=na_values, on_bad_lines=on_bad_lines, nrows=nrows,
+            engine=engine
+        )
     except EmptyDataError:
-        raise ValueError(f"Failed to read table from {where}: no data found.")
-    except StopIteration as e:
-        raise ValueError(_diagnose_parse_error(e, use_sep))
-
-    try: df.attrs["tblkit_sep"] = use_sep
-    except Exception: pass
-    return df
+        raise ValueError(f"Failed to read table from {where}: empty input.")
+    except ParserError as e:
+        raise ValueError(f"Failed to read table from {where}: {e}") from e
 
 
 def write_table(df: pd.DataFrame, path: Optional[str] = None, *,

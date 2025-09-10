@@ -14,17 +14,16 @@ def build_epilog(title: str, items: list[str]) -> str:
     return "\n".join(lines)
 
 
+# /mnt/data/parsing.py — REPLACE ENTIRE FUNCTION (QoL; keeps TSV default and adds -s)
 def add_common_io_args(ap: argparse.ArgumentParser) -> None:
     g = ap.add_argument_group("I/O")
     g.add_argument("-i", "--input", help="Input table file (default: stdin).")
-    g.add_argument("-O", "--out-file", dest="out_file", help="Output file (default: stdout).")
-
-    # TSV by default; CSV only when requested
-    g.add_argument("--sep", default="tsv",
+    g.add_argument("-O", "--out-file", dest="out_file",
+                   help="Output table file (default: stdout).")
+    g.add_argument("-s", "--sep", default="tsv",
                    help="Input field separator: tsv,csv,|,space,\\t (default: tsv).")
     g.add_argument("--output-sep", dest="output_sep",
                    help="Output field separator (default: TSV unless overridden).")
-
     g.add_argument("--encoding", default="utf-8")
     g.add_argument("--na-values", nargs="+")
     g.add_argument("--on-bad-lines", choices=("error","warn","skip"), default="error")
@@ -36,3 +35,4 @@ def add_common_io_args(ap: argparse.ArgumentParser) -> None:
     g.add_argument("--seed", type=int)
     g.add_argument("--commands", action=UFMT.CommandsAction,
                    help="Show the available commands as a tree and exit.")
+    
